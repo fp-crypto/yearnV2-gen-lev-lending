@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0
-// Feel free to change the license, but this is what we use
 
-// Feel free to change this version of Solidity. We support >=0.6.0 <0.7.0;
 pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
-// These are the core Yearn libraries
 import {BaseStrategy} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
-
 import {
-    SafeERC20,
-    SafeMath,
     IERC20,
     Address
 } from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
@@ -18,87 +12,63 @@ import {
 import "@openzeppelin/contracts/math/Math.sol";
 
 import "../interfaces/uniswap/IUni.sol";
-import {ISwapRouter} from "../interfaces/uniswap/ISwapRouter.sol";
 
 import "../interfaces/aave/IProtocolDataProvider.sol";
-import "../interfaces/aave/IAaveIncentivesController.sol";
-import "../interfaces/aave/IStakedAave.sol";
 import "../interfaces/aave/IAToken.sol";
 import "../interfaces/aave/IVariableDebtToken.sol";
 import "../interfaces/aave/ILendingPool.sol";
 
-import "./FlashMintLib.sol";
+import "../interfaces/geist/IGeistIncentivesController.sol";
+import "../interfaces/geist/IMultiFeeDistribution.sol";
 
-contract Strategy is BaseStrategy, IERC3156FlashBorrower {
-    using SafeERC20 for IERC20;
+contract Strategy is BaseStrategy {
     using Address for address;
-    using SafeMath for uint256;
 
-    // AAVE protocol address
+    // protocol address
     IProtocolDataProvider private constant protocolDataProvider =
-        IProtocolDataProvider(0x057835Ad21a177dbdd3090bB1CAE03EaCF78Fc6d);
-    IAaveIncentivesController private constant incentivesController =
-        IAaveIncentivesController(0xd784927Ff2f95ba542BfC824c8a8a98F3495f6b5);
+        IProtocolDataProvider(0xf3B0611e2E4D2cd6aB4bb3e01aDe211c3f42A8C3);
+    IGeistIncentivesController private constant incentivesController =
+        IGeistIncentivesController(0x297FddC5c33Ef988dd03bd13e162aE084ea1fE57);
     ILendingPool private constant lendingPool =
-        ILendingPool(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
+        ILendingPool(0x9FAD24f572045c7869117160A571B2e50b10d068);
 
     // Token addresses
-    address private constant aave = 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
-    IStakedAave private constant stkAave =
-        IStakedAave(0x4da27a545c0c5B758a6BA100e3a049001de870f5);
-    address private constant weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address private constant dai = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+    address private constant geist = 0xd8321AA83Fb0a4ECd6348D4577431310A6E0814d;
+
+    // wftm
+    address private constant weth = 0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83;
 
     // Supply and borrow tokens
     IAToken public aToken;
     IVariableDebtToken public debtToken;
 
-    // represents stkAave cooldown status
-    // 0 = no cooldown or past withdraw period
-    // 1 = claim period
-    // 2 = cooldown initiated, future claim period
-    enum CooldownStatus {None, Claim, Initiated}
-
     // SWAP routers
-    IUni private constant UNI_V2_ROUTER =
-        IUni(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
-    IUni private constant SUSHI_V2_ROUTER =
-        IUni(0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F);
-    ISwapRouter private constant UNI_V3_ROUTER =
-        ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+    IUni private constant SPOOKY_V2_ROUTER =
+        IUni(0xF491e7B69E4244ad4002BC14e878a34207E38c29);
+    IUni private constant SPIRIT_V2_ROUTER =
+        IUni(0x16327E3FbDaCA3bcF7E38F5Af2599D2DDc33aE52);
 
     // OPS State Variables
     uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
     uint256 private constant DEFAULT_COLLAT_MAX_MARGIN = 0.005 ether;
     uint256 private constant LIQUIDATION_WARNING_THRESHOLD = 0.01 ether;
 
-    uint256 public maxBorrowCollatRatio; // The maximum the aave protocol will let us borrow
+    uint256 public maxBorrowCollatRatio; // The maximum the protocol will let us borrow
     uint256 public targetCollatRatio; // The LTV we are levering up to
     uint256 public maxCollatRatio; // Closest to liquidation we'll risk
-    uint256 public daiBorrowCollatRatio; // Used for flashmint
-
-    uint8 public maxIterations;
-    bool public isFlashMintActive;
-    bool public withdrawCheck;
 
     uint256 public minWant;
     uint256 public minRatio;
     uint256 public minRewardToSell;
 
-    enum SwapRouter {UniV2, SushiV2, UniV3}
-    SwapRouter public swapRouter = SwapRouter.UniV2; // only applied to aave => want, stkAave => aave always uses v3
+    uint8 public maxIterations;
 
-    bool public sellStkAave;
-    bool public cooldownStkAave;
-    uint256 public maxStkAavePriceImpactBps;
-
-    uint24 public stkAaveToAaveSwapFee;
-    uint24 public aaveToWethSwapFee;
-    uint24 public wethToWantSwapFee;
+    enum SwapRouter {Spooky, Spirit}
+    IUni public router;
 
     bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
 
-    uint16 private constant referral = 7; // Yearn's aave referral code
+    uint16 private constant referral = 0;
 
     uint256 private constant MAX_BPS = 1e4;
     uint256 private constant BPS_WAD_RATIO = 1e14;
@@ -121,98 +91,59 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     }
 
     function _initializeThis() internal {
-        require(address(aToken) == address(0));
-
         // initialize operational state
-        maxIterations = 6;
-        isFlashMintActive = true;
-        withdrawCheck = false;
+        maxIterations = 10;
 
         // mins
         minWant = 100;
         minRatio = 0.005 ether;
         minRewardToSell = 1e15;
 
-        // reward params
-        swapRouter = SwapRouter.UniV2;
-        sellStkAave = true;
-        cooldownStkAave = false;
-        maxStkAavePriceImpactBps = 500;
-
-        stkAaveToAaveSwapFee = 3000;
-        aaveToWethSwapFee = 3000;
-        wethToWantSwapFee = 3000;
+        router = SPOOKY_V2_ROUTER;
 
         alreadyAdjusted = false;
 
-        // Set aave tokens
+        // Set lending+borrowing tokens
         (address _aToken, , address _debtToken) =
             protocolDataProvider.getReserveTokensAddresses(address(want));
+        require(_aToken != address(0));
         aToken = IAToken(_aToken);
         debtToken = IVariableDebtToken(_debtToken);
 
         // Let collateral targets
         (uint256 ltv, uint256 liquidationThreshold) =
             getProtocolCollatRatios(address(want));
-        targetCollatRatio = liquidationThreshold.sub(
-            DEFAULT_COLLAT_TARGET_MARGIN
-        );
+        targetCollatRatio = ltv.sub(DEFAULT_COLLAT_TARGET_MARGIN);
         maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
         maxBorrowCollatRatio = ltv.sub(DEFAULT_COLLAT_MAX_MARGIN);
-        (uint256 daiLtv, ) = getProtocolCollatRatios(dai);
-        daiBorrowCollatRatio = daiLtv.sub(DEFAULT_COLLAT_MAX_MARGIN);
 
         DECIMALS = 10**vault.decimals();
 
-        // approve spend aave spend
+        // approve spend protocol spend
         approveMaxSpend(address(want), address(lendingPool));
         approveMaxSpend(address(aToken), address(lendingPool));
 
-        // approve flashloan spend
-        address _dai = dai;
-        if (address(want) != _dai) {
-            approveMaxSpend(_dai, address(lendingPool));
-        }
-        approveMaxSpend(_dai, FlashMintLib.LENDER);
-
         // approve swap router spend
-        approveMaxSpend(address(stkAave), address(UNI_V3_ROUTER));
-        approveMaxSpend(aave, address(UNI_V2_ROUTER));
-        approveMaxSpend(aave, address(SUSHI_V2_ROUTER));
-        approveMaxSpend(aave, address(UNI_V3_ROUTER));
+        approveMaxSpend(geist, address(SPOOKY_V2_ROUTER));
+        approveMaxSpend(geist, address(SPIRIT_V2_ROUTER));
     }
 
     // SETTERS
     function setCollateralTargets(
         uint256 _targetCollatRatio,
         uint256 _maxCollatRatio,
-        uint256 _maxBorrowCollatRatio,
-        uint256 _daiBorrowCollatRatio
+        uint256 _maxBorrowCollatRatio
     ) external onlyVaultManagers {
         (uint256 ltv, uint256 liquidationThreshold) =
             getProtocolCollatRatios(address(want));
-        (uint256 daiLtv, ) = getProtocolCollatRatios(dai);
         require(_targetCollatRatio < liquidationThreshold);
         require(_maxCollatRatio < liquidationThreshold);
         require(_targetCollatRatio < _maxCollatRatio);
         require(_maxBorrowCollatRatio < ltv);
-        require(_daiBorrowCollatRatio < daiLtv);
 
         targetCollatRatio = _targetCollatRatio;
         maxCollatRatio = _maxCollatRatio;
         maxBorrowCollatRatio = _maxBorrowCollatRatio;
-        daiBorrowCollatRatio = _daiBorrowCollatRatio;
-    }
-
-    function setIsFlashMintActive(bool _isFlashMintActive)
-        external
-        onlyVaultManagers
-    {
-        isFlashMintActive = _isFlashMintActive;
-    }
-
-    function setWithdrawCheck(bool _withdrawCheck) external onlyVaultManagers {
-        withdrawCheck = _withdrawCheck;
     }
 
     function setMinsAndMaxs(
@@ -227,34 +158,21 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         maxIterations = _maxIterations;
     }
 
-    function setRewardBehavior(
-        SwapRouter _swapRouter,
-        bool _sellStkAave,
-        bool _cooldownStkAave,
-        uint256 _minRewardToSell,
-        uint256 _maxStkAavePriceImpactBps,
-        uint24 _stkAaveToAaveSwapFee,
-        uint24 _aaveToWethSwapFee,
-        uint24 _wethToWantSwapFee
-    ) external onlyVaultManagers {
+    function setRewardBehavior(SwapRouter _swapRouter, uint256 _minRewardToSell)
+        external
+        onlyVaultManagers
+    {
         require(
-            _swapRouter == SwapRouter.UniV2 ||
-                _swapRouter == SwapRouter.SushiV2 ||
-                _swapRouter == SwapRouter.UniV3
+            _swapRouter == SwapRouter.Spooky || _swapRouter == SwapRouter.Spirit
         );
-        require(_maxStkAavePriceImpactBps <= MAX_BPS);
-        swapRouter = _swapRouter;
-        sellStkAave = _sellStkAave;
-        cooldownStkAave = _cooldownStkAave;
+        router = _swapRouter == SwapRouter.Spooky
+            ? SPOOKY_V2_ROUTER
+            : SPIRIT_V2_ROUTER;
         minRewardToSell = _minRewardToSell;
-        maxStkAavePriceImpactBps = _maxStkAavePriceImpactBps;
-        stkAaveToAaveSwapFee = _stkAaveToAaveSwapFee;
-        aaveToWethSwapFee = _aaveToWethSwapFee;
-        wethToWantSwapFee = _wethToWantSwapFee;
     }
 
     function name() external view override returns (string memory) {
-        return "StrategyGenLevAAVE-Flashmint";
+        return "StrategyGenLevGeist";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
@@ -274,21 +192,19 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     }
 
     function estimatedRewardsInWant() public view returns (uint256) {
-        uint256 aaveBalance = balanceOfAave();
-        uint256 stkAaveBalance = balanceOfStkAave();
+        uint256 rewardBalance = 0;
 
-        uint256 pendingRewards =
-            incentivesController.getRewardsBalance(
-                getAaveAssets(),
-                address(this)
-            );
-        uint256 stkAaveDiscountFactor = MAX_BPS.sub(maxStkAavePriceImpactBps);
-        uint256 combinedStkAave =
-            pendingRewards.add(stkAaveBalance).mul(stkAaveDiscountFactor).div(
-                MAX_BPS
-            );
+        uint256[] memory rewards =
+            incentivesController.claimableReward(address(this), getAssets());
+        for (uint8 i = 0; i < rewards.length; i++) {
+            rewardBalance += rewards[i];
+        }
 
-        return tokenToWant(aave, aaveBalance.add(combinedStkAave));
+        // Halve the rewards from incentivesController
+        rewardBalance = rewardBalance.mul(5000).div(MAX_BPS);
+        rewardBalance = rewardBalance.add(balanceOfReward());
+
+        return tokenToWant(geist, rewardBalance);
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -306,9 +222,11 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         // account for profit / losses
         uint256 totalDebt = vault.strategies(address(this)).totalDebt;
 
+        uint256 _balanceOfWant = balanceOfWant();
+
         // Assets immediately convertable to want only
         uint256 supply = getCurrentSupply();
-        uint256 totalAssets = balanceOfWant().add(supply);
+        uint256 totalAssets = _balanceOfWant.add(supply);
 
         if (totalDebt > totalAssets) {
             // we have losses
@@ -319,10 +237,10 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         }
 
         // free funds to repay debt + profit to the strategy
-        uint256 amountAvailable = balanceOfWant();
+        uint256 amountAvailable = _balanceOfWant;
         uint256 amountRequired = _debtOutstanding.add(_profit);
 
-        if (amountRequired > amountAvailable) {
+        if (_debtOutstanding != 0 && amountRequired > amountAvailable) {
             // we need to free funds
             // we dismiss losses here, they cannot be generated from withdrawal
             // but it is possible for the strategy to unwind full position
@@ -355,8 +273,8 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         } else {
             _debtPayment = _debtOutstanding;
             // profit remains unchanged unless there is not enough to pay it
-            if (amountRequired.sub(_debtPayment) < _profit) {
-                _profit = amountRequired.sub(_debtPayment);
+            if (amountAvailable.sub(_debtPayment) < _profit) {
+                _profit = amountAvailable.sub(_debtPayment);
             }
         }
     }
@@ -373,9 +291,10 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
             wantBalance > _debtOutstanding &&
             wantBalance.sub(_debtOutstanding) > minWant
         ) {
-            _depositCollateral(wantBalance.sub(_debtOutstanding));
+            uint256 amountToDeposit = wantBalance.sub(_debtOutstanding);
+            _depositCollateral(amountToDeposit);
             // we update the value
-            wantBalance = balanceOfWant();
+            wantBalance = _debtOutstanding;
         }
         // check current position
         uint256 currentCollatRatio = getCurrentCollatRatio();
@@ -433,10 +352,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         } else {
             _liquidatedAmount = _amountNeeded;
         }
-
-        if (withdrawCheck) {
-            require(_amountNeeded == _liquidatedAmount.add(_loss)); // dev: withdraw safety check
-        }
     }
 
     function tendTrigger(uint256 gasCost) public view override returns (bool) {
@@ -444,7 +359,7 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
             //harvest takes priority
             return false;
         }
-        // pull the liquidation liquidationThreshold from aave to be extra safu
+        // pull the liquidation liquidationThreshold from protocol to be extra safu
         (, uint256 liquidationThreshold) =
             getProtocolCollatRatios(address(want));
 
@@ -496,50 +411,17 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
     // INTERNAL ACTIONS
 
     function _claimAndSellRewards() internal returns (uint256) {
-        uint256 stkAaveBalance = balanceOfStkAave();
-        CooldownStatus cooldownStatus;
-        if (stkAaveBalance > 0) {
-            cooldownStatus = _checkCooldown(); // don't check status if we have no stkAave
-        }
+        IGeistIncentivesController _incentivesController = incentivesController;
 
-        // If it's the claim period claim
-        if (stkAaveBalance > 0 && cooldownStatus == CooldownStatus.Claim) {
-            // redeem AAVE from stkAave
-            stkAave.claimRewards(address(this), type(uint256).max);
-            stkAave.redeem(address(this), stkAaveBalance);
-        }
+        _incentivesController.claim(address(this), getAssets());
 
-        // claim stkAave from lending and borrowing, this will reset the cooldown
-        incentivesController.claimRewards(
-            getAaveAssets(),
-            type(uint256).max,
-            address(this)
-        );
+        // Exit with 50% penalty
+        IMultiFeeDistribution(_incentivesController.rewardMinter()).exit();
 
-        stkAaveBalance = balanceOfStkAave();
-
-        // request start of cooldown period, if there's no cooldown in progress
-        if (
-            cooldownStkAave &&
-            stkAaveBalance > 0 &&
-            cooldownStatus == CooldownStatus.None
-        ) {
-            stkAave.cooldown();
-        }
-
-        // Always keep 1 wei to get around cooldown clear
-        if (sellStkAave && stkAaveBalance >= minRewardToSell.add(1)) {
-            uint256 minAAVEOut =
-                stkAaveBalance.mul(MAX_BPS.sub(maxStkAavePriceImpactBps)).div(
-                    MAX_BPS
-                );
-            _sellSTKAAVEToAAVE(stkAaveBalance.sub(1), minAAVEOut);
-        }
-
-        // sell AAVE for want
-        uint256 aaveBalance = balanceOfAave();
-        if (aaveBalance >= minRewardToSell) {
-            _sellAAVEForWant(aaveBalance, 0);
+        // sell reward for want
+        uint256 rewardBalance = balanceOfReward();
+        if (rewardBalance >= minRewardToSell) {
+            _sellRewardForWant(rewardBalance, 0);
         }
     }
 
@@ -561,98 +443,66 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
 
     function _leverMax() internal {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
+        uint256 wantBalance = balanceOfWant();
 
-        // NOTE: decimals should cancel out
         uint256 realSupply = deposits.sub(borrows);
         uint256 newBorrow = getBorrowFromSupply(realSupply, targetCollatRatio);
         uint256 totalAmountToBorrow = newBorrow.sub(borrows);
 
-        if (isFlashMintActive) {
-            // The best approach is to lever up using regular method, then finish with flash loan
-            totalAmountToBorrow = totalAmountToBorrow.sub(
-                _leverUpStep(totalAmountToBorrow)
-            );
+        uint8 _maxIterations = maxIterations;
+        uint256 _minWant = minWant;
 
-            if (totalAmountToBorrow > minWant) {
-                totalAmountToBorrow = totalAmountToBorrow.sub(
-                    _leverUpFlashLoan(totalAmountToBorrow)
+        for (
+            uint8 i = 0;
+            i < _maxIterations && totalAmountToBorrow > _minWant;
+            i++
+        ) {
+            uint256 amount = totalAmountToBorrow;
+
+            // calculate how much borrow to take
+            //(deposits, borrows) = getCurrentPosition();
+            uint256 canBorrow =
+                getBorrowFromDeposit(
+                    deposits.add(wantBalance),
+                    maxBorrowCollatRatio
                 );
+
+            if (canBorrow <= borrows) {
+                break;
             }
-        } else {
-            for (
-                uint8 i = 0;
-                i < maxIterations && totalAmountToBorrow > minWant;
-                i++
-            ) {
-                totalAmountToBorrow = totalAmountToBorrow.sub(
-                    _leverUpStep(totalAmountToBorrow)
-                );
+            canBorrow = canBorrow.sub(borrows);
+
+            if (canBorrow < amount) {
+                amount = canBorrow;
             }
-        }
-    }
 
-    function _leverUpFlashLoan(uint256 amount) internal returns (uint256) {
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 depositsToMeetLtv =
-            getDepositFromBorrow(borrows, maxBorrowCollatRatio);
-        uint256 depositsDeficitToMeetLtv = 0;
-        if (depositsToMeetLtv > deposits) {
-            depositsDeficitToMeetLtv = depositsToMeetLtv.sub(deposits);
-        }
-        return
-            FlashMintLib.doFlashMint(
-                false,
-                amount,
-                address(want),
-                daiBorrowCollatRatio,
-                depositsDeficitToMeetLtv
-            );
-    }
+            // deposit available want as collateral
+            _depositCollateral(wantBalance);
 
-    function _leverUpStep(uint256 amount) internal returns (uint256) {
-        if (amount == 0) {
-            return 0;
+            // borrow available amount
+            _borrowWant(amount);
+
+            // track ourselves to save gas
+            deposits = deposits.add(wantBalance);
+            borrows = borrows.add(amount);
+            wantBalance = amount;
+
+            totalAmountToBorrow = totalAmountToBorrow.sub(amount);
         }
 
-        uint256 wantBalance = balanceOfWant();
-
-        // calculate how much borrow can I take
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        uint256 canBorrow =
-            getBorrowFromDeposit(
-                deposits.add(wantBalance),
-                maxBorrowCollatRatio
-            );
-
-        if (canBorrow <= borrows) {
-            return 0;
+        if (wantBalance >= minWant) {
+            _depositCollateral(wantBalance);
         }
-        canBorrow = canBorrow.sub(borrows);
-
-        if (canBorrow < amount) {
-            amount = canBorrow;
-        }
-
-        // deposit available want as collateral
-        _depositCollateral(wantBalance);
-
-        // borrow available amount
-        _borrowWant(amount);
-
-        return amount;
     }
 
     function _leverDownTo(uint256 newAmountBorrowed, uint256 currentBorrowed)
         internal
     {
-        if (currentBorrowed > newAmountBorrowed) {
-            uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
 
-            if (isFlashMintActive) {
-                totalRepayAmount = totalRepayAmount.sub(
-                    _leverDownFlashLoan(totalRepayAmount)
-                );
-            }
+        if (currentBorrowed > newAmountBorrowed) {
+            uint256 wantBalance = balanceOfWant();
+            uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
 
             uint256 _maxCollatRatio = maxCollatRatio;
 
@@ -661,19 +511,29 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
                 i < maxIterations && totalRepayAmount > minWant;
                 i++
             ) {
-                _withdrawExcessCollateral(_maxCollatRatio);
+                uint256 withdrawn =
+                    _withdrawExcessCollateral(
+                        _maxCollatRatio,
+                        deposits,
+                        borrows
+                    );
+                wantBalance = wantBalance.add(withdrawn); // track ourselves to save gas
                 uint256 toRepay = totalRepayAmount;
-                uint256 wantBalance = balanceOfWant();
                 if (toRepay > wantBalance) {
                     toRepay = wantBalance;
                 }
                 uint256 repaid = _repayWant(toRepay);
+
+                // track ourselves to save gas
+                deposits = deposits.sub(withdrawn);
+                wantBalance = wantBalance.sub(repaid);
+                borrows = borrows.sub(repaid);
+
                 totalRepayAmount = totalRepayAmount.sub(repaid);
             }
         }
 
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 _targetCollatRatio = targetCollatRatio;
         uint256 targetDeposit =
             getDepositFromBorrow(borrows, _targetCollatRatio);
@@ -683,31 +543,15 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
                 _depositCollateral(Math.min(toDeposit, balanceOfWant()));
             }
         } else {
-            _withdrawExcessCollateral(_targetCollatRatio);
+            _withdrawExcessCollateral(_targetCollatRatio, deposits, borrows);
         }
     }
 
-    function _leverDownFlashLoan(uint256 amount) internal returns (uint256) {
-        if (amount <= minWant) return 0;
-        (, uint256 borrows) = getCurrentPosition();
-        if (amount > borrows) {
-            amount = borrows;
-        }
-        return
-            FlashMintLib.doFlashMint(
-                true,
-                amount,
-                address(want),
-                daiBorrowCollatRatio,
-                0
-            );
-    }
-
-    function _withdrawExcessCollateral(uint256 collatRatio)
-        internal
-        returns (uint256 amount)
-    {
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
+    function _withdrawExcessCollateral(
+        uint256 collatRatio,
+        uint256 deposits,
+        uint256 borrows
+    ) internal returns (uint256 amount) {
         uint256 theoDeposits = getDepositFromBorrow(borrows, collatRatio);
         if (deposits > theoDeposits) {
             uint256 toWithdraw = deposits.sub(theoDeposits);
@@ -715,27 +559,24 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         }
     }
 
-    function _depositCollateral(uint256 amount) internal returns (uint256) {
-        if (amount == 0) return 0;
+    function _depositCollateral(uint256 amount) internal {
+        if (amount == 0) return;
         lendingPool.deposit(address(want), amount, address(this), referral);
-        return amount;
+    }
+
+    function _borrowWant(uint256 amount) internal {
+        if (amount == 0) return;
+        lendingPool.borrow(address(want), amount, 2, referral, address(this));
     }
 
     function _withdrawCollateral(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
-        lendingPool.withdraw(address(want), amount, address(this));
-        return amount;
+        return lendingPool.withdraw(address(want), amount, address(this));
     }
 
     function _repayWant(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
         return lendingPool.repay(address(want), amount, 2, address(this));
-    }
-
-    function _borrowWant(uint256 amount) internal returns (uint256) {
-        if (amount == 0) return 0;
-        lendingPool.borrow(address(want), amount, 2, referral, address(this));
-        return amount;
     }
 
     // INTERNAL VIEWS
@@ -751,27 +592,8 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         return debtToken.balanceOf(address(this));
     }
 
-    function balanceOfAave() internal view returns (uint256) {
-        return IERC20(aave).balanceOf(address(this));
-    }
-
-    function balanceOfStkAave() internal view returns (uint256) {
-        return IERC20(address(stkAave)).balanceOf(address(this));
-    }
-
-    function onFlashLoan(
-        address initiator,
-        address token,
-        uint256 amount,
-        uint256 fee,
-        bytes calldata data
-    ) external override returns (bytes32) {
-        require(msg.sender == FlashMintLib.LENDER);
-        require(initiator == address(this));
-        (bool deficit, uint256 amountWant) = abi.decode(data, (bool, uint256));
-
-        return
-            FlashMintLib.loanLogic(deficit, amountWant, amount, address(want));
+    function balanceOfReward() internal view returns (uint256) {
+        return IERC20(geist).balanceOf(address(this));
     }
 
     function getCurrentPosition()
@@ -812,9 +634,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
             return amount;
         }
 
-        // KISS: just use a v2 router for quotes which aren't used in critical logic
-        IUni router =
-            swapRouter == SwapRouter.SushiV2 ? SUSHI_V2_ROUTER : UNI_V2_ROUTER;
         uint256[] memory amounts =
             router.getAmountsOut(
                 amount,
@@ -831,28 +650,6 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         returns (uint256)
     {
         return tokenToWant(weth, _amtInWei);
-    }
-
-    function _checkCooldown() internal view returns (CooldownStatus) {
-        uint256 cooldownStartTimestamp =
-            IStakedAave(stkAave).stakersCooldowns(address(this));
-        uint256 COOLDOWN_SECONDS = IStakedAave(stkAave).COOLDOWN_SECONDS();
-        uint256 UNSTAKE_WINDOW = IStakedAave(stkAave).UNSTAKE_WINDOW();
-        uint256 nextClaimStartTimestamp =
-            cooldownStartTimestamp.add(COOLDOWN_SECONDS);
-
-        if (cooldownStartTimestamp == 0) {
-            return CooldownStatus.None;
-        }
-        if (
-            block.timestamp > nextClaimStartTimestamp &&
-            block.timestamp <= nextClaimStartTimestamp.add(UNSTAKE_WINDOW)
-        ) {
-            return CooldownStatus.Claim;
-        }
-        if (block.timestamp < nextClaimStartTimestamp) {
-            return CooldownStatus.Initiated;
-        }
     }
 
     function getTokenOutPathV2(address _token_in, address _token_out)
@@ -873,75 +670,20 @@ contract Strategy is BaseStrategy, IERC3156FlashBorrower {
         }
     }
 
-    function getTokenOutPathV3(address _token_in, address _token_out)
-        internal
-        view
-        returns (bytes memory _path)
-    {
-        if (address(want) == weth) {
-            _path = abi.encodePacked(
-                address(aave),
-                aaveToWethSwapFee,
-                address(weth)
-            );
-        } else {
-            _path = abi.encodePacked(
-                address(aave),
-                aaveToWethSwapFee,
-                address(weth),
-                wethToWantSwapFee,
-                address(want)
-            );
-        }
-    }
-
-    function _sellAAVEForWant(uint256 amountIn, uint256 minOut) internal {
+    function _sellRewardForWant(uint256 amountIn, uint256 minOut) internal {
         if (amountIn == 0) {
             return;
         }
-        if (swapRouter == SwapRouter.UniV3) {
-            UNI_V3_ROUTER.exactInput(
-                ISwapRouter.ExactInputParams(
-                    getTokenOutPathV3(address(aave), address(want)),
-                    address(this),
-                    now,
-                    amountIn,
-                    minOut
-                )
-            );
-        } else {
-            IUni router =
-                swapRouter == SwapRouter.UniV2
-                    ? UNI_V2_ROUTER
-                    : SUSHI_V2_ROUTER;
-            router.swapExactTokensForTokens(
-                amountIn,
-                minOut,
-                getTokenOutPathV2(address(aave), address(want)),
-                address(this),
-                now
-            );
-        }
-    }
-
-    function _sellSTKAAVEToAAVE(uint256 amountIn, uint256 minOut) internal {
-        // Swap Rewards in UNIV3
-        // NOTE: Unoptimized, can be frontrun and most importantly this pool is low liquidity
-        UNI_V3_ROUTER.exactInputSingle(
-            ISwapRouter.ExactInputSingleParams(
-                address(stkAave),
-                address(aave),
-                stkAaveToAaveSwapFee,
-                address(this),
-                now,
-                amountIn, // wei
-                minOut,
-                0
-            )
+        router.swapExactTokensForTokens(
+            amountIn,
+            minOut,
+            getTokenOutPathV2(address(geist), address(want)),
+            address(this),
+            now
         );
     }
 
-    function getAaveAssets() internal view returns (address[] memory assets) {
+    function getAssets() internal view returns (address[] memory assets) {
         assets = new address[](2);
         assets[0] = address(aToken);
         assets[1] = address(debtToken);
