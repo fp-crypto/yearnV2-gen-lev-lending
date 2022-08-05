@@ -1,15 +1,23 @@
-// SPDX-License-Identifier: agpl-3.0
-pragma solidity 0.6.12;
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.10;
 
+/**
+ * @title IPriceOracle
+ * @author Aave
+ * @notice Defines the basic interface for a Price oracle.
+ **/
 interface IPriceOracle {
-    function getAssetPrice(address _asset) external view returns (uint256);
+    /**
+     * @notice Returns the asset price in the base currency
+     * @param asset The address of the asset
+     * @return The price of the asset
+     **/
+    function getAssetPrice(address asset) external view returns (uint256);
 
-    function getAssetsPrices(address[] calldata _assets)
-        external
-        view
-        returns (uint256[] memory);
-
-    function getSourceOfAsset(address _asset) external view returns (address);
-
-    function getFallbackOracle() external view returns (address);
+    /**
+     * @notice Set the price of the asset
+     * @param asset The address of the asset
+     * @param price The price of the asset
+     **/
+    function setAssetPrice(address asset, uint256 price) external;
 }

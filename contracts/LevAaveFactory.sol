@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0
-pragma solidity 0.6.12;
+pragma solidity ^0.8.12;
 pragma experimental ABIEncoderV2;
 
 import "./Strategy.sol";
 
-contract LevGeistFactory {
+contract LevAaaveFactory {
     address public immutable original;
 
     event Cloned(address indexed clone);

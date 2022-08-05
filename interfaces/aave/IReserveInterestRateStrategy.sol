@@ -1,37 +1,41 @@
-// SPDX-License-Identifier: agpl-3.0
-pragma solidity 0.6.12;
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.10;
+
+import {DataTypes} from "./DataTypes.sol";
 
 /**
- * @title IReserveInterestRateStrategyInterface interface
- * @dev Interface for the calculation of the interest rates
+ * @title IReserveInterestRateStrategy
  * @author Aave
+ * @notice Interface for the calculation of the interest rates
  */
 interface IReserveInterestRateStrategy {
-    function OPTIMAL_UTILIZATION_RATE() external view returns (uint256);
+    /**
+     * @notice Returns the base variable borrow rate
+     * @return The base variable borrow rate, expressed in ray
+     **/
+    function getBaseVariableBorrowRate() external view returns (uint256);
 
-    function EXCESS_UTILIZATION_RATE() external view returns (uint256);
-
-    function variableRateSlope1() external view returns (uint256);
-
-    function variableRateSlope2() external view returns (uint256);
-
-    function baseVariableBorrowRate() external view returns (uint256);
-
+    /**
+     * @notice Returns the maximum variable borrow rate
+     * @return The maximum variable borrow rate, expressed in ray
+     **/
     function getMaxVariableBorrowRate() external view returns (uint256);
 
+    /**
+     * @notice Calculates the interest rates depending on the reserve's state and configurations
+     * @param params The parameters needed to calculate interest rates
+     * @return liquidityRate The liquidity rate expressed in rays
+     * @return stableBorrowRate The stable borrow rate expressed in rays
+     * @return variableBorrowRate The variable borrow rate expressed in rays
+     **/
     function calculateInterestRates(
-        address reserve,
-        uint256 utilizationRate,
-        uint256 totalStableDebt,
-        uint256 totalVariableDebt,
-        uint256 averageStableBorrowRate,
-        uint256 reserveFactor
+        DataTypes.CalculateInterestRatesParams memory params
     )
         external
         view
         returns (
-            uint256 liquidityRate,
-            uint256 stableBorrowRate,
-            uint256 variableBorrowRate
+            uint256,
+            uint256,
+            uint256
         );
 }

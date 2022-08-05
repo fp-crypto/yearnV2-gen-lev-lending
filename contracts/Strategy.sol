@@ -1,25 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0
 
-pragma solidity 0.6.12;
-pragma experimental ABIEncoderV2;
+pragma solidity ^0.8.12;
 
 import {BaseStrategy} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
-import {
-    IERC20,
-    Address
-} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
-import "@openzeppelin/contracts/math/Math.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {
+    SafeERC20
+} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import "../interfaces/uniswap/IUni.sol";
 
 import "../interfaces/aave/IProtocolDataProvider.sol";
 import "../interfaces/aave/IAToken.sol";
 import "../interfaces/aave/IVariableDebtToken.sol";
-import "../interfaces/aave/ILendingPool.sol";
-
-import "../interfaces/geist/IGeistIncentivesController.sol";
-import "../interfaces/geist/IMultiFeeDistribution.sol";
+import {IPool as ILendingPool} from "../interfaces/aave/IPool.sol";
 
 contract Strategy is BaseStrategy {
     using Address for address;
