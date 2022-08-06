@@ -52,4 +52,13 @@ interface IPoolDataProvider {
      * @return The total debt for asset
      **/
     function getTotalDebt(address asset) external view returns (uint256);
+
+    function getReserveTokensAddresses(address asset)
+        external
+        view
+        returns (
+            address aTokenAddress,
+            address stableDebtTokenAddress,
+            address variableDebtTokenAddress
+        );
 }

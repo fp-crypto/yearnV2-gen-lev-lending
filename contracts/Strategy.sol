@@ -12,39 +12,59 @@ import {
 
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
-import "../interfaces/uniswap/IUni.sol";
+//import "../interfaces/uniswap/IUni.sol";
 
-import "../interfaces/aave/IProtocolDataProvider.sol";
-import "../interfaces/aave/IAToken.sol";
-import "../interfaces/aave/IVariableDebtToken.sol";
-import {IPool as ILendingPool} from "../interfaces/aave/IPool.sol";
+import "../interfaces/aave/v3/core/IPoolDataProvider.sol";
+import "../interfaces/aave/v3/core/IAToken.sol";
+import "../interfaces/aave/v3/core/IVariableDebtToken.sol";
+import {IPool as ILendingPool} from "../interfaces/aave/v3/core/IPool.sol";
+import "../interfaces/aave/v3/periphery/IRewardsController.sol";
+
+interface IVeledrome {
+    struct route {
+        address from;
+        address to;
+        bool stable;
+    }
+
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        route[] calldata routes,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+
+    function getAmountsOut(uint256 amountIn, route[] memory routes)
+        external
+        view
+        returns (uint256[] memory amounts);
+}
 
 contract Strategy is BaseStrategy {
     using Address for address;
 
     // protocol address
-    IProtocolDataProvider private constant protocolDataProvider =
-        IProtocolDataProvider(0xf3B0611e2E4D2cd6aB4bb3e01aDe211c3f42A8C3);
-    IGeistIncentivesController private constant incentivesController =
-        IGeistIncentivesController(0x297FddC5c33Ef988dd03bd13e162aE084ea1fE57);
+    IPoolDataProvider private constant protocolDataProvider =
+        IPoolDataProvider(0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654);
+    IRewardsController private constant rewardsController =
+        IRewardsController(0x929EC64c34a17401F460460D4B9390518E5B473e);
     ILendingPool private constant lendingPool =
-        ILendingPool(0x9FAD24f572045c7869117160A571B2e50b10d068);
+        ILendingPool(0x794a61358D6845594F94dc1DB02A252b5b4814aD);
 
-    // Token addresses
-    address private constant geist = 0xd8321AA83Fb0a4ECd6348D4577431310A6E0814d;
-
-    // wftm
-    address private constant weth = 0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83;
+    // weth
+    address private constant weth = 0x4200000000000000000000000000000000000006;
 
     // Supply and borrow tokens
     IAToken public aToken;
     IVariableDebtToken public debtToken;
 
     // SWAP routers
-    IUni private constant SPOOKY_V2_ROUTER =
-        IUni(0xF491e7B69E4244ad4002BC14e878a34207E38c29);
-    IUni private constant SPIRIT_V2_ROUTER =
-        IUni(0x16327E3FbDaCA3bcF7E38F5Af2599D2DDc33aE52);
+    IVeledrome private constant VELODROME_ROUTER =
+        IVeledrome(0xa132DAB612dB5cB9fC9Ac426A0Cc215A3423F9c9);
+
+    // Swap Router
+    address public router;
 
     // OPS State Variables
     uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
@@ -61,15 +81,12 @@ contract Strategy is BaseStrategy {
 
     uint8 public maxIterations;
 
-    enum SwapRouter {Spooky, Spirit}
-    IUni public router;
-
     bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
 
     uint16 private constant referral = 0;
 
     uint256 private constant MAX_BPS = 1e4;
-    uint256 private constant BPS_WAD_RATIO = 1e14;
+    uint256 private constant WAD_BPS_RATIO = 1e14;
     uint256 private constant COLLATERAL_RATIO_PRECISION = 1 ether;
     uint256 private constant PESSIMISM_FACTOR = 1000;
     uint256 private DECIMALS;
@@ -97,7 +114,7 @@ contract Strategy is BaseStrategy {
         minRatio = 0.005 ether;
         minRewardToSell = 1e15;
 
-        router = SPOOKY_V2_ROUTER;
+        router = address(VELODROME_ROUTER);
 
         alreadyAdjusted = false;
 
@@ -111,9 +128,9 @@ contract Strategy is BaseStrategy {
         // Let collateral targets
         (uint256 ltv, uint256 liquidationThreshold) =
             getProtocolCollatRatios(address(want));
-        targetCollatRatio = ltv.sub(DEFAULT_COLLAT_TARGET_MARGIN);
-        maxCollatRatio = liquidationThreshold.sub(DEFAULT_COLLAT_MAX_MARGIN);
-        maxBorrowCollatRatio = ltv.sub(DEFAULT_COLLAT_MAX_MARGIN);
+        targetCollatRatio = ltv - DEFAULT_COLLAT_TARGET_MARGIN;
+        maxCollatRatio = liquidationThreshold - DEFAULT_COLLAT_MAX_MARGIN;
+        maxBorrowCollatRatio = ltv - DEFAULT_COLLAT_MAX_MARGIN;
 
         DECIMALS = 10**vault.decimals();
 
@@ -122,8 +139,7 @@ contract Strategy is BaseStrategy {
         approveMaxSpend(address(aToken), address(lendingPool));
 
         // approve swap router spend
-        approveMaxSpend(geist, address(SPOOKY_V2_ROUTER));
-        approveMaxSpend(geist, address(SPIRIT_V2_ROUTER));
+        approveRouterRewardSpend();
     }
 
     // SETTERS
@@ -156,26 +172,26 @@ contract Strategy is BaseStrategy {
         maxIterations = _maxIterations;
     }
 
-    function setRewardBehavior(SwapRouter _swapRouter, uint256 _minRewardToSell)
+    function setRewardBehavior(uint256 _minRewardToSell)
         external
+        //(SwapRouter _swapRouter, uint256 _minRewardToSell)
         onlyVaultManagers
     {
-        require(
-            _swapRouter == SwapRouter.Spooky || _swapRouter == SwapRouter.Spirit
-        );
-        router = _swapRouter == SwapRouter.Spooky
-            ? SPOOKY_V2_ROUTER
-            : SPIRIT_V2_ROUTER;
+        //require(
+        //    _swapRouter == SwapRouter.Spooky || _swapRouter == SwapRouter.Spirit
+        //);
+        //router = _swapRouter == SwapRouter.Spooky
+        //    ? SPOOKY_V2_ROUTER
+        //    : SPIRIT_V2_ROUTER;
         minRewardToSell = _minRewardToSell;
     }
 
     function name() external view override returns (string memory) {
-        return "StrategyGenLevGeist";
+        return "StrategyGenLevAaveV3-Optimism";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
-        uint256 balanceExcludingRewards =
-            balanceOfWant().add(getCurrentSupply());
+        uint256 balanceExcludingRewards = balanceOfWant() + getCurrentSupply();
 
         // if we don't have a position, don't worry about rewards
         if (balanceExcludingRewards < minWant) {
@@ -183,26 +199,29 @@ contract Strategy is BaseStrategy {
         }
 
         uint256 rewards =
-            estimatedRewardsInWant().mul(MAX_BPS.sub(PESSIMISM_FACTOR)).div(
-                MAX_BPS
-            );
-        return balanceExcludingRewards.add(rewards);
+            (estimatedRewardsInWant() * (MAX_BPS - PESSIMISM_FACTOR)) / MAX_BPS;
+        return balanceExcludingRewards + rewards;
     }
 
-    function estimatedRewardsInWant() public view returns (uint256) {
-        uint256 rewardBalance = 0;
+    function estimatedRewardsInWant()
+        public
+        view
+        returns (uint256 rewardBalanceInWant)
+    {
+        address[] memory rewardTokens = getRewardTokens();
+        address[] memory assets = getAssets();
+        IRewardsController _rewardsController = rewardsController;
 
-        uint256[] memory rewards =
-            incentivesController.claimableReward(address(this), getAssets());
-        for (uint8 i = 0; i < rewards.length; i++) {
-            rewardBalance += rewards[i];
+        for (uint256 i = 0; i < rewardTokens.length; i++) {
+            uint256 rewardBalance =
+                _rewardsController.getUserRewards(
+                    assets,
+                    rewardTokens[i],
+                    address(this)
+                );
+            rewardBalance += IERC20(rewardTokens[i]).balanceOf(address(this));
+            rewardBalanceInWant += tokenToWant(rewardTokens[i], rewardBalance);
         }
-
-        // Halve the rewards from incentivesController
-        rewardBalance = rewardBalance.mul(5000).div(MAX_BPS);
-        rewardBalance = rewardBalance.add(balanceOfReward());
-
-        return tokenToWant(geist, rewardBalance);
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -224,19 +243,21 @@ contract Strategy is BaseStrategy {
 
         // Assets immediately convertable to want only
         uint256 supply = getCurrentSupply();
-        uint256 totalAssets = _balanceOfWant.add(supply);
+        uint256 totalAssets = _balanceOfWant + supply;
 
-        if (totalDebt > totalAssets) {
-            // we have losses
-            _loss = totalDebt.sub(totalAssets);
-        } else {
-            // we have profit
-            _profit = totalAssets.sub(totalDebt);
+        unchecked {
+            if (totalDebt > totalAssets) {
+                // we have losses
+                _loss = totalDebt - totalAssets;
+            } else {
+                // we have profit
+                _profit = totalAssets - totalDebt;
+            }
         }
 
         // free funds to repay debt + profit to the strategy
         uint256 amountAvailable = _balanceOfWant;
-        uint256 amountRequired = _debtOutstanding.add(_profit);
+        uint256 amountRequired = _debtOutstanding + _profit;
 
         if (_debtOutstanding != 0 && amountRequired > amountAvailable) {
             // we need to free funds
@@ -250,8 +271,8 @@ contract Strategy is BaseStrategy {
             if (amountAvailable >= amountRequired) {
                 _debtPayment = _debtOutstanding;
                 // profit remains unchanged unless there is not enough to pay it
-                if (amountRequired.sub(_debtPayment) < _profit) {
-                    _profit = amountRequired.sub(_debtPayment);
+                if (amountRequired - _debtPayment < _profit) {
+                    _profit = amountRequired - _debtPayment;
                 }
             } else {
                 // we were not able to free enough funds
@@ -265,14 +286,14 @@ contract Strategy is BaseStrategy {
                     // NOTE: amountRequired is always equal or greater than _debtOutstanding
                     // important to use amountRequired just in case amountAvailable is > amountAvailable
                     _debtPayment = _debtOutstanding;
-                    _profit = amountAvailable.sub(_debtPayment);
+                    _profit = amountAvailable - _debtPayment;
                 }
             }
         } else {
             _debtPayment = _debtOutstanding;
             // profit remains unchanged unless there is not enough to pay it
-            if (amountAvailable.sub(_debtPayment) < _profit) {
-                _profit = amountAvailable.sub(_debtPayment);
+            if (amountAvailable - _debtPayment < _profit) {
+                _profit = amountAvailable - _debtPayment;
             }
         }
     }
@@ -287,9 +308,9 @@ contract Strategy is BaseStrategy {
         // deposit available want as collateral
         if (
             wantBalance > _debtOutstanding &&
-            wantBalance.sub(_debtOutstanding) > minWant
+            wantBalance - _debtOutstanding > minWant
         ) {
-            uint256 amountToDeposit = wantBalance.sub(_debtOutstanding);
+            uint256 amountToDeposit = wantBalance - _debtOutstanding;
             _depositCollateral(amountToDeposit);
             // we update the value
             wantBalance = _debtOutstanding;
@@ -300,24 +321,21 @@ contract Strategy is BaseStrategy {
         // Either we need to free some funds OR we want to be max levered
         if (_debtOutstanding > wantBalance) {
             // we should free funds
-            uint256 amountRequired = _debtOutstanding.sub(wantBalance);
+            uint256 amountRequired = _debtOutstanding - wantBalance;
 
             // NOTE: vault will take free funds during the next harvest
             _freeFunds(amountRequired);
         } else if (currentCollatRatio < targetCollatRatio) {
             // we should lever up
-            if (targetCollatRatio.sub(currentCollatRatio) > minRatio) {
+            if (targetCollatRatio - currentCollatRatio > minRatio) {
                 // we only act on relevant differences
                 _leverMax();
             }
         } else if (currentCollatRatio > targetCollatRatio) {
-            if (currentCollatRatio.sub(targetCollatRatio) > minRatio) {
+            if (currentCollatRatio - targetCollatRatio > minRatio) {
                 (uint256 deposits, uint256 borrows) = getCurrentPosition();
                 uint256 newBorrow =
-                    getBorrowFromSupply(
-                        deposits.sub(borrows),
-                        targetCollatRatio
-                    );
+                    getBorrowFromSupply(deposits - borrows, targetCollatRatio);
                 _leverDownTo(newBorrow, borrows);
             }
         }
@@ -337,13 +355,13 @@ contract Strategy is BaseStrategy {
         }
 
         // we need to free funds
-        uint256 amountRequired = _amountNeeded.sub(wantBalance);
+        uint256 amountRequired = _amountNeeded - wantBalance;
         _freeFunds(amountRequired);
 
         uint256 freeAssets = balanceOfWant();
         if (_amountNeeded > freeAssets) {
             _liquidatedAmount = freeAssets;
-            uint256 diff = _amountNeeded.sub(_liquidatedAmount);
+            uint256 diff = _amountNeeded - _liquidatedAmount;
             if (diff <= minWant) {
                 _loss = diff;
             }
@@ -367,7 +385,7 @@ contract Strategy is BaseStrategy {
             return true;
         }
 
-        return (liquidationThreshold.sub(currentCollatRatio) <=
+        return (liquidationThreshold - currentCollatRatio <=
             LIQUIDATION_WARNING_THRESHOLD);
     }
 
@@ -409,17 +427,18 @@ contract Strategy is BaseStrategy {
     // INTERNAL ACTIONS
 
     function _claimAndSellRewards() internal returns (uint256) {
-        IGeistIncentivesController _incentivesController = incentivesController;
+        IRewardsController _rewardsController = rewardsController;
 
-        _incentivesController.claim(address(this), getAssets());
-
-        // Exit with 50% penalty
-        IMultiFeeDistribution(_incentivesController.rewardMinter()).exit();
+        _rewardsController.claimAllRewards(getAssets(), address(this));
 
         // sell reward for want
-        uint256 rewardBalance = balanceOfReward();
-        if (rewardBalance >= minRewardToSell) {
-            _sellRewardForWant(rewardBalance, 0);
+        address[] memory rewardTokens = getRewardTokens();
+        for (uint256 i = 0; i < rewardTokens.length; i++) {
+            uint256 rewardBalance =
+                IERC20(rewardTokens[i]).balanceOf(address(this));
+            if (rewardBalance >= minRewardToSell) {
+                _sellTokenForWant(rewardTokens[i], rewardBalance, 0);
+            }
         }
     }
 
@@ -428,9 +447,9 @@ contract Strategy is BaseStrategy {
 
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
 
-        uint256 realAssets = deposits.sub(borrows);
+        uint256 realAssets = deposits - borrows;
         uint256 amountRequired = Math.min(amountToFree, realAssets);
-        uint256 newSupply = realAssets.sub(amountRequired);
+        uint256 newSupply = realAssets - amountRequired;
         uint256 newBorrow = getBorrowFromSupply(newSupply, targetCollatRatio);
 
         // repay required amount
@@ -443,9 +462,9 @@ contract Strategy is BaseStrategy {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 wantBalance = balanceOfWant();
 
-        uint256 realSupply = deposits.sub(borrows);
+        uint256 realSupply = deposits - borrows;
         uint256 newBorrow = getBorrowFromSupply(realSupply, targetCollatRatio);
-        uint256 totalAmountToBorrow = newBorrow.sub(borrows);
+        uint256 totalAmountToBorrow = newBorrow - borrows;
 
         uint8 _maxIterations = maxIterations;
         uint256 _minWant = minWant;
@@ -461,14 +480,14 @@ contract Strategy is BaseStrategy {
             //(deposits, borrows) = getCurrentPosition();
             uint256 canBorrow =
                 getBorrowFromDeposit(
-                    deposits.add(wantBalance),
+                    deposits + wantBalance,
                     maxBorrowCollatRatio
                 );
 
             if (canBorrow <= borrows) {
                 break;
             }
-            canBorrow = canBorrow.sub(borrows);
+            canBorrow = canBorrow - borrows;
 
             if (canBorrow < amount) {
                 amount = canBorrow;
@@ -481,11 +500,11 @@ contract Strategy is BaseStrategy {
             _borrowWant(amount);
 
             // track ourselves to save gas
-            deposits = deposits.add(wantBalance);
-            borrows = borrows.add(amount);
+            deposits = deposits + wantBalance;
+            borrows = borrows + amount;
             wantBalance = amount;
 
-            totalAmountToBorrow = totalAmountToBorrow.sub(amount);
+            totalAmountToBorrow = totalAmountToBorrow - amount;
         }
 
         if (wantBalance >= minWant) {
@@ -500,7 +519,7 @@ contract Strategy is BaseStrategy {
 
         if (currentBorrowed > newAmountBorrowed) {
             uint256 wantBalance = balanceOfWant();
-            uint256 totalRepayAmount = currentBorrowed.sub(newAmountBorrowed);
+            uint256 totalRepayAmount = currentBorrowed - newAmountBorrowed;
 
             uint256 _maxCollatRatio = maxCollatRatio;
 
@@ -515,7 +534,7 @@ contract Strategy is BaseStrategy {
                         deposits,
                         borrows
                     );
-                wantBalance = wantBalance.add(withdrawn); // track ourselves to save gas
+                wantBalance = wantBalance + withdrawn; // track ourselves to save gas
                 uint256 toRepay = totalRepayAmount;
                 if (toRepay > wantBalance) {
                     toRepay = wantBalance;
@@ -523,11 +542,11 @@ contract Strategy is BaseStrategy {
                 uint256 repaid = _repayWant(toRepay);
 
                 // track ourselves to save gas
-                deposits = deposits.sub(withdrawn);
-                wantBalance = wantBalance.sub(repaid);
-                borrows = borrows.sub(repaid);
+                deposits = deposits - withdrawn;
+                wantBalance = wantBalance - repaid;
+                borrows = borrows - repaid;
 
-                totalRepayAmount = totalRepayAmount.sub(repaid);
+                totalRepayAmount = totalRepayAmount - repaid;
             }
         }
 
@@ -536,7 +555,7 @@ contract Strategy is BaseStrategy {
         uint256 targetDeposit =
             getDepositFromBorrow(borrows, _targetCollatRatio);
         if (targetDeposit > deposits) {
-            uint256 toDeposit = targetDeposit.sub(deposits);
+            uint256 toDeposit = targetDeposit - deposits;
             if (toDeposit > minWant) {
                 _depositCollateral(Math.min(toDeposit, balanceOfWant()));
             }
@@ -552,7 +571,7 @@ contract Strategy is BaseStrategy {
     ) internal returns (uint256 amount) {
         uint256 theoDeposits = getDepositFromBorrow(borrows, collatRatio);
         if (deposits > theoDeposits) {
-            uint256 toWithdraw = deposits.sub(theoDeposits);
+            uint256 toWithdraw = deposits - theoDeposits;
             return _withdrawCollateral(toWithdraw);
         }
     }
@@ -577,7 +596,8 @@ contract Strategy is BaseStrategy {
         return lendingPool.repay(address(want), amount, 2, address(this));
     }
 
-    // INTERNAL VIEWS
+    // Section: balanceOf views
+
     function balanceOfWant() internal view returns (uint256) {
         return want.balanceOf(address(this));
     }
@@ -587,12 +607,25 @@ contract Strategy is BaseStrategy {
     }
 
     function balanceOfDebtToken() internal view returns (uint256) {
-        return debtToken.balanceOf(address(this));
+        return IERC20(address(debtToken)).balanceOf(address(this));
     }
 
-    function balanceOfReward() internal view returns (uint256) {
-        return IERC20(geist).balanceOf(address(this));
+    function balanceOfRewards()
+        internal
+        view
+        returns (address[] memory rewardTokens, uint256[] memory rewardBalances)
+    {
+        rewardTokens = getRewardTokens();
+        rewardBalances = new uint256[](rewardTokens.length);
+
+        for (uint256 i = 0; i < rewardTokens.length; i++) {
+            rewardBalances[i] = IERC20(rewardTokens[i]).balanceOf(
+                address(this)
+            );
+        }
     }
+
+    // Section: Current Position Views
 
     function getCurrentPosition()
         public
@@ -611,15 +644,15 @@ contract Strategy is BaseStrategy {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
 
         if (deposits > 0) {
-            currentCollatRatio = borrows.mul(COLLATERAL_RATIO_PRECISION).div(
-                deposits
-            );
+            currentCollatRatio =
+                (borrows * COLLATERAL_RATIO_PRECISION) /
+                deposits;
         }
     }
 
     function getCurrentSupply() public view returns (uint256) {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
-        return deposits.sub(borrows);
+        return deposits - borrows;
     }
 
     // conversions
@@ -668,24 +701,24 @@ contract Strategy is BaseStrategy {
         }
     }
 
-    function _sellRewardForWant(uint256 amountIn, uint256 minOut) internal {
+    function _sellTokenForWant(
+        address token,
+        uint256 amountIn,
+        uint256 minOut
+    ) internal {
         if (amountIn == 0) {
             return;
         }
         router.swapExactTokensForTokens(
             amountIn,
             minOut,
-            getTokenOutPathV2(address(geist), address(want)),
+            getTokenOutPathV2(token, address(want)),
             address(this),
             now
         );
     }
 
-    function getAssets() internal view returns (address[] memory assets) {
-        assets = new address[](2);
-        assets[0] = address(aToken);
-        assets[1] = address(debtToken);
-    }
+    // Section: Interactions with Aave Protocol
 
     function getProtocolCollatRatios(address token)
         internal
@@ -695,16 +728,45 @@ contract Strategy is BaseStrategy {
         (, ltv, liquidationThreshold, , , , , , , ) = protocolDataProvider
             .getReserveConfigurationData(token);
         // convert bps to wad
-        ltv = ltv.mul(BPS_WAD_RATIO);
-        liquidationThreshold = liquidationThreshold.mul(BPS_WAD_RATIO);
+        ltv = ltv * WAD_BPS_RATIO;
+        liquidationThreshold = liquidationThreshold * WAD_BPS_RATIO;
     }
+
+    function getRewardTokens()
+        internal
+        view
+        returns (address[] memory rewardTokens)
+    {
+        mapping(address => bool) memory rewardsSeen;
+        IRewardsController _rewardsController = rewardsController;
+        rewardTokens = _rewardsController.getRewardsByAsset(aToken);
+        for (uint256 i = 0; i < rewardTokens.length; i++) {
+            rewardsSeen[rewardTokens[i]] = true;
+        }
+
+        address[] memory debtTokenRewards = _rewardsController(debtToken);
+        for (uint256 i = 0; i < debtTokenRewards.length; i++) {
+            if (!rewardsSeen[debtTokenRewards[i]]) {
+                rewardTokens.push(debtTokenRewards[i]);
+                rewardsSeen[debtTokenRewards[i]] = true;
+            }
+        }
+    }
+
+    function getAssets() internal view returns (address[] memory assets) {
+        assets = new address[](2);
+        assets[0] = address(aToken);
+        assets[1] = address(debtToken);
+    }
+
+    // Section: LTV Math
 
     function getBorrowFromDeposit(uint256 deposit, uint256 collatRatio)
         internal
         pure
         returns (uint256)
     {
-        return deposit.mul(collatRatio).div(COLLATERAL_RATIO_PRECISION);
+        return (deposit * collatRatio) / COLLATERAL_RATIO_PRECISION;
     }
 
     function getDepositFromBorrow(uint256 borrow, uint256 collatRatio)
@@ -712,7 +774,7 @@ contract Strategy is BaseStrategy {
         pure
         returns (uint256)
     {
-        return borrow.mul(COLLATERAL_RATIO_PRECISION).div(collatRatio);
+        return (borrow * COLLATERAL_RATIO_PRECISION) / collatRatio;
     }
 
     function getBorrowFromSupply(uint256 supply, uint256 collatRatio)
@@ -721,9 +783,16 @@ contract Strategy is BaseStrategy {
         returns (uint256)
     {
         return
-            supply.mul(collatRatio).div(
-                COLLATERAL_RATIO_PRECISION.sub(collatRatio)
-            );
+            (supply * collatRatio) / (COLLATERAL_RATIO_PRECISION - collatRatio);
+    }
+
+    // Section: Misc Utils
+
+    function approveRouterRewardSpend() internal {
+        (address[] memory rewardTokens, ) = getRewardTokens();
+        for (uint256 i = 0; i < rewardTokens.length; i++) {
+            approveMaxSpend(rewardTokens[i], router);
+        }
     }
 
     function approveMaxSpend(address token, address spender) internal {
