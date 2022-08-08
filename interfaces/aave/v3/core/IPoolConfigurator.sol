@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.10;
 
-import {
-    ConfiguratorInputTypes
-} from "../protocol/libraries/types/ConfiguratorInputTypes.sol";
+import {ConfiguratorInputTypes} from "./ConfiguratorInputTypes.sol";
 
 /**
  * @title IPoolConfigurator

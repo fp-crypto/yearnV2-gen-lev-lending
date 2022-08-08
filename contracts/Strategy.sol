@@ -13,6 +13,7 @@ import {
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
 //import "../interfaces/uniswap/IUni.sol";
+import "../interfaces/velodrome/IVelodromeRouter.sol";
 
 import "../interfaces/aave/v3/core/IPoolDataProvider.sol";
 import "../interfaces/aave/v3/core/IAToken.sol";
@@ -20,29 +21,9 @@ import "../interfaces/aave/v3/core/IVariableDebtToken.sol";
 import {IPool as ILendingPool} from "../interfaces/aave/v3/core/IPool.sol";
 import "../interfaces/aave/v3/periphery/IRewardsController.sol";
 
-interface IVeledrome {
-    struct route {
-        address from;
-        address to;
-        bool stable;
-    }
-
-    function swapExactTokensForTokens(
-        uint256 amountIn,
-        uint256 amountOutMin,
-        route[] calldata routes,
-        address to,
-        uint256 deadline
-    ) external returns (uint256[] memory amounts);
-
-    function getAmountsOut(uint256 amountIn, route[] memory routes)
-        external
-        view
-        returns (uint256[] memory amounts);
-}
-
 contract Strategy is BaseStrategy {
     using Address for address;
+    using SafeERC20 for IERC20;
 
     // protocol address
     IPoolDataProvider private constant protocolDataProvider =
@@ -58,10 +39,11 @@ contract Strategy is BaseStrategy {
     // Supply and borrow tokens
     IAToken public aToken;
     IVariableDebtToken public debtToken;
+    address[] public rewardTokens;
 
     // SWAP routers
-    IVeledrome private constant VELODROME_ROUTER =
-        IVeledrome(0xa132DAB612dB5cB9fC9Ac426A0Cc215A3423F9c9);
+    IVelodromeRouter private constant VELODROME_ROUTER =
+        IVelodromeRouter(0xa132DAB612dB5cB9fC9Ac426A0Cc215A3423F9c9);
 
     // Swap Router
     address public router;
@@ -91,7 +73,7 @@ contract Strategy is BaseStrategy {
     uint256 private constant PESSIMISM_FACTOR = 1000;
     uint256 private DECIMALS;
 
-    constructor(address _vault) public BaseStrategy(_vault) {
+    constructor(address _vault) BaseStrategy(_vault) {
         _initializeThis();
     }
 
@@ -208,7 +190,6 @@ contract Strategy is BaseStrategy {
         view
         returns (uint256 rewardBalanceInWant)
     {
-        address[] memory rewardTokens = getRewardTokens();
         address[] memory assets = getAssets();
         IRewardsController _rewardsController = rewardsController;
 
@@ -432,7 +413,6 @@ contract Strategy is BaseStrategy {
         _rewardsController.claimAllRewards(getAssets(), address(this));
 
         // sell reward for want
-        address[] memory rewardTokens = getRewardTokens();
         for (uint256 i = 0; i < rewardTokens.length; i++) {
             uint256 rewardBalance =
                 IERC20(rewardTokens[i]).balanceOf(address(this));
@@ -613,13 +593,15 @@ contract Strategy is BaseStrategy {
     function balanceOfRewards()
         internal
         view
-        returns (address[] memory rewardTokens, uint256[] memory rewardBalances)
+        returns (
+            address[] memory _rewardTokens,
+            uint256[] memory _rewardBalances
+        )
     {
-        rewardTokens = getRewardTokens();
-        rewardBalances = new uint256[](rewardTokens.length);
-
-        for (uint256 i = 0; i < rewardTokens.length; i++) {
-            rewardBalances[i] = IERC20(rewardTokens[i]).balanceOf(
+        _rewardTokens = rewardTokens;
+        _rewardBalances = new uint256[](rewardTokens.length);
+        for (uint256 i = 0; i < _rewardTokens.length; i++) {
+            _rewardBalances[i] = IERC20(_rewardTokens[i]).balanceOf(
                 address(this)
             );
         }
@@ -656,22 +638,23 @@ contract Strategy is BaseStrategy {
     }
 
     // conversions
-    function tokenToWant(address token, uint256 amount)
+    function tokenToWant(address token, uint256 amountIn)
         internal
         view
-        returns (uint256)
+        returns (uint256 amountOut)
     {
-        if (amount == 0 || address(want) == token) {
-            return amount;
+        if (amountIn == 0 || address(want) == token) {
+            return amountIn;
         }
 
-        uint256[] memory amounts =
-            router.getAmountsOut(
-                amount,
-                getTokenOutPathV2(token, address(want))
-            );
-
-        return amounts[amounts.length - 1];
+        if (router == address(VELODROME_ROUTER)) {
+            uint256[] memory amounts =
+                VELODROME_ROUTER.getAmountsOut(
+                    amountIn,
+                    getTokenOutPathVelo(token, address(want))
+                );
+            amountOut = amounts[amounts.length - 1];
+        }
     }
 
     function ethToWant(uint256 _amtInWei)
@@ -701,6 +684,23 @@ contract Strategy is BaseStrategy {
         }
     }
 
+    function getTokenOutPathVelo(address _token_in, address _token_out)
+        internal
+        pure
+        returns (IVelodromeRouter.route[] memory _path)
+    {
+        bool is_weth =
+            _token_in == address(weth) || _token_out == address(weth);
+        _path = new IVelodromeRouter.route[](is_weth ? 1 : 2);
+
+        if (is_weth) {
+            _path[0] = IVelodromeRouter.route(_token_in, _token_out, false);
+        } else {
+            _path[0] = IVelodromeRouter.route(_token_in, weth, false);
+            _path[1] = IVelodromeRouter.route(weth, _token_out, false);
+        }
+    }
+
     function _sellTokenForWant(
         address token,
         uint256 amountIn,
@@ -709,13 +709,15 @@ contract Strategy is BaseStrategy {
         if (amountIn == 0) {
             return;
         }
-        router.swapExactTokensForTokens(
-            amountIn,
-            minOut,
-            getTokenOutPathV2(token, address(want)),
-            address(this),
-            now
-        );
+        if (router == address(VELODROME_ROUTER)) {
+            VELODROME_ROUTER.swapExactTokensForTokens(
+                amountIn,
+                minOut,
+                getTokenOutPathVelo(token, address(want)),
+                address(this),
+                block.timestamp
+            );
+        }
     }
 
     // Section: Interactions with Aave Protocol
@@ -732,23 +734,23 @@ contract Strategy is BaseStrategy {
         liquidationThreshold = liquidationThreshold * WAD_BPS_RATIO;
     }
 
-    function getRewardTokens()
-        internal
-        view
-        returns (address[] memory rewardTokens)
-    {
-        mapping(address => bool) memory rewardsSeen;
+    function updateRewardTokens() external onlyEmergencyAuthorized {
         IRewardsController _rewardsController = rewardsController;
-        rewardTokens = _rewardsController.getRewardsByAsset(aToken);
-        for (uint256 i = 0; i < rewardTokens.length; i++) {
-            rewardsSeen[rewardTokens[i]] = true;
-        }
+        rewardTokens = _rewardsController.getRewardsByAsset(address(aToken));
+        uint256 rewardTokenCount = rewardTokens.length;
 
-        address[] memory debtTokenRewards = _rewardsController(debtToken);
+        address[] memory debtTokenRewards =
+            _rewardsController.getRewardsByAsset(address(debtToken));
         for (uint256 i = 0; i < debtTokenRewards.length; i++) {
-            if (!rewardsSeen[debtTokenRewards[i]]) {
+            bool seen = false;
+            for (uint256 j = 0; j < rewardTokenCount; j++) {
+                if (debtTokenRewards[i] == rewardTokens[j]) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) {
                 rewardTokens.push(debtTokenRewards[i]);
-                rewardsSeen[debtTokenRewards[i]] = true;
             }
         }
     }
@@ -789,7 +791,6 @@ contract Strategy is BaseStrategy {
     // Section: Misc Utils
 
     function approveRouterRewardSpend() internal {
-        (address[] memory rewardTokens, ) = getRewardTokens();
         for (uint256 i = 0; i < rewardTokens.length; i++) {
             approveMaxSpend(rewardTokens[i], router);
         }
