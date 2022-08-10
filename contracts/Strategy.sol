@@ -35,6 +35,8 @@ contract Strategy is BaseStrategy {
 
     // weth
     address private constant weth = 0x4200000000000000000000000000000000000006;
+    // usdc
+    address private constant usdc = 0x7F5c764cBc14f9669B88837ca1490cCa17c31607;
 
     // Supply and borrow tokens
     IAToken public aToken;
@@ -60,6 +62,7 @@ contract Strategy is BaseStrategy {
     uint256 public minWant;
     uint256 public minRatio;
     uint256 public minRewardToSell;
+    bool public veloUseUsdcIntermediate; // use weth by default
 
     uint8 public maxIterations;
 
@@ -89,7 +92,7 @@ contract Strategy is BaseStrategy {
 
     function _initializeThis() internal {
         // initialize operational state
-        maxIterations = 10;
+        maxIterations = 12;
 
         // mins
         minWant = 100;
@@ -97,6 +100,7 @@ contract Strategy is BaseStrategy {
         minRewardToSell = 1e15;
 
         router = address(VELODROME_ROUTER);
+        veloUseUsdcIntermediate = true;
 
         alreadyAdjusted = false;
 
@@ -120,6 +124,7 @@ contract Strategy is BaseStrategy {
         approveMaxSpend(address(want), address(lendingPool));
         approveMaxSpend(address(aToken), address(lendingPool));
 
+        _updateRewardTokens();
         // approve swap router spend
         approveRouterRewardSpend();
     }
@@ -159,12 +164,6 @@ contract Strategy is BaseStrategy {
         //(SwapRouter _swapRouter, uint256 _minRewardToSell)
         onlyVaultManagers
     {
-        //require(
-        //    _swapRouter == SwapRouter.Spooky || _swapRouter == SwapRouter.Spirit
-        //);
-        //router = _swapRouter == SwapRouter.Spooky
-        //    ? SPOOKY_V2_ROUTER
-        //    : SPIRIT_V2_ROUTER;
         minRewardToSell = _minRewardToSell;
     }
 
@@ -215,7 +214,8 @@ contract Strategy is BaseStrategy {
         )
     {
         // claim & sell rewards
-        _claimAndSellRewards();
+        _claimRewards();
+        _sellRewards();
 
         // account for profit / losses
         uint256 totalDebt = vault.strategies(address(this)).totalDebt;
@@ -390,9 +390,16 @@ contract Strategy is BaseStrategy {
     {}
 
     //emergency function that we can use to deleverage manually if something is broken
-    function manualDeleverage(uint256 amount) external onlyVaultManagers {
-        _withdrawCollateral(amount);
-        _repayWant(amount);
+    function manualDeleverage(uint256 amount, bool withATokens)
+        external
+        onlyVaultManagers
+    {
+        if (withATokens) {
+            _repayWithATokens(amount);
+        } else {
+            _withdrawCollateral(amount);
+            _repayWant(amount);
+        }
     }
 
     //emergency function that we can use to deleverage manually if something is broken
@@ -400,18 +407,28 @@ contract Strategy is BaseStrategy {
         _withdrawCollateral(amount);
     }
 
-    // emergency function that we can use to sell rewards if something is broken
-    function manualClaimAndSellRewards() external onlyVaultManagers {
-        _claimAndSellRewards();
+    // function that we can use to claim rewards if something is broken
+    function manualClaimRewards() external onlyVaultManagers {
+        _claimRewards();
+    }
+
+    // function that we can use to sell rewards if something is broken
+    function manualSellRewards() external onlyVaultManagers {
+        _sellRewards();
+    }
+
+    function updateRewardTokens() external onlyVaultManagers {
+        _updateRewardTokens();
     }
 
     // INTERNAL ACTIONS
 
-    function _claimAndSellRewards() internal returns (uint256) {
+    function _claimRewards() internal returns (uint256) {
         IRewardsController _rewardsController = rewardsController;
-
         _rewardsController.claimAllRewards(getAssets(), address(this));
+    }
 
+    function _sellRewards() internal returns (uint256) {
         // sell reward for want
         for (uint256 i = 0; i < rewardTokens.length; i++) {
             uint256 rewardBalance =
@@ -480,9 +497,11 @@ contract Strategy is BaseStrategy {
             _borrowWant(amount);
 
             // track ourselves to save gas
-            deposits = deposits + wantBalance;
-            borrows = borrows + amount;
-            wantBalance = amount;
+            //deposits = deposits + wantBalance;
+            //borrows = borrows + amount;
+            //wantBalance = amount;
+            (deposits, borrows) = getCurrentPosition();
+            wantBalance = balanceOfWant();
 
             totalAmountToBorrow = totalAmountToBorrow - amount;
         }
@@ -500,36 +519,14 @@ contract Strategy is BaseStrategy {
         if (currentBorrowed > newAmountBorrowed) {
             uint256 wantBalance = balanceOfWant();
             uint256 totalRepayAmount = currentBorrowed - newAmountBorrowed;
-
             uint256 _maxCollatRatio = maxCollatRatio;
-
-            for (
-                uint8 i = 0;
-                i < maxIterations && totalRepayAmount > minWant;
-                i++
-            ) {
-                uint256 withdrawn =
-                    _withdrawExcessCollateral(
-                        _maxCollatRatio,
-                        deposits,
-                        borrows
-                    );
-                wantBalance = wantBalance + withdrawn; // track ourselves to save gas
-                uint256 toRepay = totalRepayAmount;
-                if (toRepay > wantBalance) {
-                    toRepay = wantBalance;
-                }
-                uint256 repaid = _repayWant(toRepay);
-
-                // track ourselves to save gas
-                deposits = deposits - withdrawn;
-                wantBalance = wantBalance - repaid;
-                borrows = borrows - repaid;
-
-                totalRepayAmount = totalRepayAmount - repaid;
-            }
+            uint256 repaid = _repayWithATokens(totalRepayAmount);
+            // track ourselves to save gas
+            borrows = borrows - repaid;
+            deposits = deposits - totalRepayAmount;
         }
 
+        (deposits, borrows) = getCurrentPosition();
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
         uint256 _targetCollatRatio = targetCollatRatio;
         uint256 targetDeposit =
@@ -558,7 +555,7 @@ contract Strategy is BaseStrategy {
 
     function _depositCollateral(uint256 amount) internal {
         if (amount == 0) return;
-        lendingPool.deposit(address(want), amount, address(this), referral);
+        lendingPool.supply(address(want), amount, address(this), referral);
     }
 
     function _borrowWant(uint256 amount) internal {
@@ -576,7 +573,12 @@ contract Strategy is BaseStrategy {
         return lendingPool.repay(address(want), amount, 2, address(this));
     }
 
-    // Section: balanceOf views
+    function _repayWithATokens(uint256 amount) internal returns (uint256) {
+        if (amount == 0) return 0;
+        return lendingPool.repayWithATokens(address(want), amount, 2);
+    }
+
+    // Section: interal balanceOf views
 
     function balanceOfWant() internal view returns (uint256) {
         return want.balanceOf(address(this));
@@ -637,7 +639,8 @@ contract Strategy is BaseStrategy {
         return deposits - borrows;
     }
 
-    // conversions
+    // Section: swap helpers
+
     function tokenToWant(address token, uint256 amountIn)
         internal
         view
@@ -686,18 +689,21 @@ contract Strategy is BaseStrategy {
 
     function getTokenOutPathVelo(address _token_in, address _token_out)
         internal
-        pure
+        view
         returns (IVelodromeRouter.route[] memory _path)
     {
         bool is_weth =
             _token_in == address(weth) || _token_out == address(weth);
-        _path = new IVelodromeRouter.route[](is_weth ? 1 : 2);
+        bool is_usdc =
+            _token_in == address(usdc) || _token_out == address(usdc);
+        _path = new IVelodromeRouter.route[](is_weth || is_usdc ? 1 : 2);
 
-        if (is_weth) {
+        if (is_weth || is_usdc) {
             _path[0] = IVelodromeRouter.route(_token_in, _token_out, false);
         } else {
-            _path[0] = IVelodromeRouter.route(_token_in, weth, false);
-            _path[1] = IVelodromeRouter.route(weth, _token_out, false);
+            address intermediate = veloUseUsdcIntermediate ? usdc : weth;
+            _path[0] = IVelodromeRouter.route(_token_in, intermediate, false);
+            _path[1] = IVelodromeRouter.route(intermediate, _token_out, true);
         }
     }
 
@@ -734,7 +740,13 @@ contract Strategy is BaseStrategy {
         liquidationThreshold = liquidationThreshold * WAD_BPS_RATIO;
     }
 
-    function updateRewardTokens() external onlyEmergencyAuthorized {
+    function getAssets() internal view returns (address[] memory assets) {
+        assets = new address[](2);
+        assets[0] = address(aToken);
+        assets[1] = address(debtToken);
+    }
+
+    function _updateRewardTokens() internal {
         IRewardsController _rewardsController = rewardsController;
         rewardTokens = _rewardsController.getRewardsByAsset(address(aToken));
         uint256 rewardTokenCount = rewardTokens.length;
@@ -753,12 +765,6 @@ contract Strategy is BaseStrategy {
                 rewardTokens.push(debtTokenRewards[i]);
             }
         }
-    }
-
-    function getAssets() internal view returns (address[] memory assets) {
-        assets = new address[](2);
-        assets[0] = address(aToken);
-        assets[1] = address(debtToken);
     }
 
     // Section: LTV Math

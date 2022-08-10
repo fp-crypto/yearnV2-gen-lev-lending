@@ -4,7 +4,7 @@ pragma experimental ABIEncoderV2;
 
 import "./Strategy.sol";
 
-contract LevAaaveFactory {
+contract LevAaveFactory {
     address public immutable original;
 
     event Cloned(address indexed clone);

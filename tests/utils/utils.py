@@ -17,22 +17,24 @@ def strategy_status(vault, strategy):
     print(f"--- Strategy {strategy.name()} ---")
     print(f"Performance fee {status['performanceFee']}")
     print(f"Debt Ratio {status['debtRatio']}")
-    print(f"Total Debt {to_units(vault, status['totalDebt'])}")
-    print(f"Total Gain {to_units(vault, status['totalGain'])}")
-    print(f"Total Loss {to_units(vault, status['totalLoss'])}")
-    print(f"Estimated Total Assets {to_units(vault, strategy.estimatedTotalAssets())}")
+    print(f"Total Debt {to_units(vault, status['totalDebt']):,.2f}")
+    print(f"Total Gain {to_units(vault, status['totalGain']):,.2f}")
+    print(f"Total Loss {to_units(vault, status['totalLoss']):,.2f}")
     print(
-        f"Estimated Total Rewards {to_units(vault, strategy.estimatedRewardsInWant())}"
+        f"Estimated Total Assets {to_units(vault, strategy.estimatedTotalAssets()):,.2f}"
     )
     print(
-        f"Loose Want {to_units(vault, Contract(strategy.want()).balanceOf(strategy))}"
+        f"Estimated Total Rewards {to_units(vault, strategy.estimatedRewardsInWant()):,.2f}"
     )
-    print(f"Current Lend {to_units(vault, lend)}")
-    print(f"Current Borrow {to_units(vault, borrow)}")
-    print(f"Current LTV Ratio {ratio/1e18:.4f}")
-    print(f"Target LTV Ratio {strategy.targetCollatRatio()/1e18:.4f}")
-    print(f"Max LTV Ratio {strategy.maxCollatRatio()/1e18:.4f}")
-    print(f"Max Borrow LTV Ratio {strategy.maxBorrowCollatRatio()/1e18:.4f}")
+    print(
+        f"Loose Want {to_units(vault, Contract(strategy.want()).balanceOf(strategy)):,.2f}"
+    )
+    print(f"Current Lend {to_units(vault, lend):,.2f}")
+    print(f"Current Borrow {to_units(vault, borrow):,.2f}")
+    print(f"Current LTV Ratio {ratio/1e18:.4%}")
+    print(f"Target LTV Ratio {strategy.targetCollatRatio()/1e18:.4%}")
+    print(f"Max LTV Ratio {strategy.maxCollatRatio()/1e18:.4%}")
+    print(f"Max Borrow LTV Ratio {strategy.maxBorrowCollatRatio()/1e18:.4%}")
 
 
 def to_units(token, amount):
@@ -44,6 +46,6 @@ def from_units(token, amount):
 
 
 # default: 6 hours (sandwich protection)
-def sleep(seconds=6 * 60 * 60):
+def sleep(seconds=6 * 60 * 60, mine=1):
     chain.sleep(seconds)
-    chain.mine(1)
+    chain.mine(mine)

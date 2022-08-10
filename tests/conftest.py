@@ -50,23 +50,19 @@ def keeper(accounts):
 
 
 token_addresses = {
-    "BTC": "0x321162Cd933E2Be498Cd2267a90534A804051b11",  # WBTC
-    "ETH": "0x74b23882a30290451A17c44f4F05243b6b58C76d",  # WETH
-    "DAI": "0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E",  # DAI
-    "USDC": "0x04068DA6C83AFCFA0e13ba15A6696662335D5B75",  # USDC
-    "WFTM": "0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83",  # WFTM
-    "MIM": "0x82f0B8B456c1A451378467398982d4834b6829c1",  # MIM
+    "WBTC": "0x68f180fcCe6836688e9084f035309E29Bf0A2095",  # WBTC
+    "WETH": "0x4200000000000000000000000000000000000006",  # WETH
+    "DAI": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",  # DAI
+    "USDC": "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",  # USDC
 }
 
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        # "BTC",   # WBTC
-        # "ETH",   # ETH
-        # "DAI",   # DAI
-        # "USDC",  # USDC
-        "WFTM",  # WFTM
-        # "MIM",   # MIM
+        # "WBTC",   # WBTC
+        "WETH",  # ETH
+        "DAI",  # DAI
+        "USDC",  # USDC
     ],
     scope="session",
     autouse=True,
@@ -76,12 +72,10 @@ def token(request):
 
 
 whale_addresses = {
-    "BTC": "0x4565DC3Ef685E4775cdF920129111DdF43B9d882",
-    "ETH": "0xC772BA6C2c28859B7a0542FAa162a56115dDCE25",
-    "DAI": "0x8CFA87aD11e69E071c40D58d2d1a01F862aE01a8",
-    "USDC": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
-    "WFTM": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d",
-    "MIM": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
+    "WBTC": "0x73B14a78a0D396C521f954532d43fd5fFe385216",
+    "WETH": "0x6202A3B0bE1D222971E93AaB084c6E584C29DB70",
+    "DAI": "0x1337BedC9D22ecbe766dF105c9623922A27963EC",
+    "USDC": "0xAD7b4C162707E0B2b5f6fdDbD3f8538A5fbA0d60",
 }
 
 
@@ -91,20 +85,17 @@ def token_whale(token):
 
 
 token_prices = {
-    "BTC": 40_000,
-    "ETH": 3_500,
-    "YFI": 30_000,
+    "WBTC": 20_000,
+    "WETH": 1_500,
     "DAI": 1,
     "USDC": 1,
-    "WFTM": 2,
-    "MIM": 1,
 }
 
 
 @pytest.fixture(autouse=True, scope="function")
 def amount(token, token_whale, user):
     # this will get the number of tokens (around $1m worth of token)
-    base_amount = round(1_000_000 / token_prices[token.symbol()])
+    base_amount = round(250_000 / token_prices[token.symbol()])
     amount = base_amount * 10 ** token.decimals()
     # In order to get some funds for the token you are about to use,
     # it impersonate a whale address
@@ -128,15 +119,9 @@ def big_amount(token, token_whale, user):
 
 
 @pytest.fixture
-def wftm():
-    yield Contract("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83")
-
-
-@pytest.fixture
-def weth(wftm):
-    yield wftm
-    # token_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-    # yield Contract(token_address)
+def weth():
+    token_address = token_addresses["WETH"]
+    yield Contract(token_address)
 
 
 @pytest.fixture
@@ -160,14 +145,21 @@ def vault(pm, gov, rewards, guardian, management, token):
 
 
 @pytest.fixture(scope="function")
-def factory(strategist, vault, LevGeistFactory):
-    yield strategist.deploy(LevGeistFactory, vault)
+def factory(strategist, vault, LevAaveFactory):
+    yield strategist.deploy(LevAaveFactory, vault)
 
 
 @pytest.fixture(scope="function")
 def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
     strategy = Strategy.at(factory.original())
     strategy.setKeeper(keeper, {"from": strategist})
+    #strategy.setCollateralTargets(
+    #    strategy.maxBorrowCollatRatio() * 1,  # reduce leverage to 50% the max
+    #    strategy.maxCollatRatio(),
+    #    strategy.maxBorrowCollatRatio(),
+    #    {"from": gov},
+    #)
+
     vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
     chain.sleep(1)
     chain.mine()
@@ -176,9 +168,14 @@ def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
 
 @pytest.fixture()
 def enable_healthcheck(strategy, gov):
-    strategy.setHealthCheck("0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0", {"from": gov})
+    strategy.setHealthCheck("0x3d8F58774611676fd196D26149C71a9142C45296", {"from": gov})
     strategy.setDoHealthCheck(True, {"from": gov})
     yield True
+
+
+@pytest.fixture(scope="session")
+def protocol_data_provider():
+    yield Contract("0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654")  # ProtocolDataProvider
 
 
 @pytest.fixture(scope="session", autouse=True)
