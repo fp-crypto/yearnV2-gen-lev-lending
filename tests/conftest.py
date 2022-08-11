@@ -127,9 +127,7 @@ def weth():
 @pytest.fixture
 def weth_amount(user, weth):
     weth_amount = 10 ** weth.decimals()
-    weth.transfer(
-        user, weth_amount, {"from": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d"}
-    )
+    weth.transfer(user, weth_amount, {"from": whale_addresses["WETH"]})
     yield weth_amount
 
 
@@ -138,7 +136,7 @@ def vault(pm, gov, rewards, guardian, management, token):
     Vault = pm(config["dependencies"][0]).Vault
     vault = guardian.deploy(Vault)
     vault.initialize(token, gov, rewards, "", "", guardian, management)
-    vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
+    vault.setDepositLimit(2**256 - 1, {"from": gov})
     vault.setManagement(management, {"from": gov})
     vault.setManagementFee(0, {"from": gov})
     yield vault
@@ -153,20 +151,14 @@ def factory(strategist, vault, LevAaveFactory):
 def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
     strategy = Strategy.at(factory.original())
     strategy.setKeeper(keeper, {"from": strategist})
-    #strategy.setCollateralTargets(
-    #    strategy.maxBorrowCollatRatio() * 1,  # reduce leverage to 50% the max
-    #    strategy.maxCollatRatio(),
-    #    strategy.maxBorrowCollatRatio(),
-    #    {"from": gov},
-    #)
 
-    vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
+    vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 1_000, {"from": gov})
     chain.sleep(1)
     chain.mine()
     yield strategy
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def enable_healthcheck(strategy, gov):
     strategy.setHealthCheck("0x3d8F58774611676fd196D26149C71a9142C45296", {"from": gov})
     strategy.setDoHealthCheck(True, {"from": gov})
@@ -176,6 +168,18 @@ def enable_healthcheck(strategy, gov):
 @pytest.fixture(scope="session")
 def protocol_data_provider():
     yield Contract("0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654")  # ProtocolDataProvider
+
+
+@pytest.fixture(scope="function", autouse=True)
+def set_min_max(strategy, token, management):
+    if token.address == token_addresses["DAI"]:
+        strategy.setMinsAndMaxs(
+            0.1 * 1e18,
+            strategy.minRatio(),
+            strategy.maxIterations(),
+            {"from": management},
+        )
+        strategy.setVeloBehavior(True, True, {"from": management})
 
 
 @pytest.fixture(scope="session", autouse=True)

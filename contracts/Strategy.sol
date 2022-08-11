@@ -62,7 +62,9 @@ contract Strategy is BaseStrategy {
     uint256 public minWant;
     uint256 public minRatio;
     uint256 public minRewardToSell;
+
     bool public veloUseUsdcIntermediate; // use weth by default
+    bool public veloWantIsStable; // tell velo hop from usdc to want is stable
 
     uint8 public maxIterations;
 
@@ -92,10 +94,10 @@ contract Strategy is BaseStrategy {
 
     function _initializeThis() internal {
         // initialize operational state
-        maxIterations = 12;
+        maxIterations = 15;
 
         // mins
-        minWant = 100;
+        minWant = 10000;
         minRatio = 0.005 ether;
         minRewardToSell = 1e15;
 
@@ -167,6 +169,14 @@ contract Strategy is BaseStrategy {
         minRewardToSell = _minRewardToSell;
     }
 
+    function setVeloBehavior(
+        bool _veloUseUsdcIntermediate,
+        bool _veloWantIsStable
+    ) external onlyVaultManagers {
+        veloUseUsdcIntermediate = _veloUseUsdcIntermediate;
+        veloWantIsStable = _veloWantIsStable;
+    }
+
     function name() external view override returns (string memory) {
         return "StrategyGenLevAaveV3-Optimism";
     }
@@ -192,12 +202,12 @@ contract Strategy is BaseStrategy {
         address[] memory assets = getAssets();
         IRewardsController _rewardsController = rewardsController;
 
-        for (uint256 i = 0; i < rewardTokens.length; i++) {
+        for (uint256 i; i < rewardTokens.length; ++i) {
             uint256 rewardBalance =
                 _rewardsController.getUserRewards(
                     assets,
-                    rewardTokens[i],
-                    address(this)
+                    address(this),
+                    rewardTokens[i]
                 );
             rewardBalance += IERC20(rewardTokens[i]).balanceOf(address(this));
             rewardBalanceInWant += tokenToWant(rewardTokens[i], rewardBalance);
@@ -430,7 +440,7 @@ contract Strategy is BaseStrategy {
 
     function _sellRewards() internal returns (uint256) {
         // sell reward for want
-        for (uint256 i = 0; i < rewardTokens.length; i++) {
+        for (uint256 i; i < rewardTokens.length; ++i) {
             uint256 rewardBalance =
                 IERC20(rewardTokens[i]).balanceOf(address(this));
             if (rewardBalance >= minRewardToSell) {
@@ -520,10 +530,12 @@ contract Strategy is BaseStrategy {
             uint256 wantBalance = balanceOfWant();
             uint256 totalRepayAmount = currentBorrowed - newAmountBorrowed;
             uint256 _maxCollatRatio = maxCollatRatio;
-            uint256 repaid = _repayWithATokens(totalRepayAmount);
-            // track ourselves to save gas
-            borrows = borrows - repaid;
-            deposits = deposits - totalRepayAmount;
+            uint256 repaid =
+                _repayWithATokens(
+                    totalRepayAmount < borrows
+                        ? totalRepayAmount
+                        : type(uint256).max
+                );
         }
 
         (deposits, borrows) = getCurrentPosition();
@@ -692,18 +704,23 @@ contract Strategy is BaseStrategy {
         view
         returns (IVelodromeRouter.route[] memory _path)
     {
-        bool is_weth =
-            _token_in == address(weth) || _token_out == address(weth);
-        bool is_usdc =
-            _token_in == address(usdc) || _token_out == address(usdc);
+        address _weth = address(weth);
+        address _usdc = address(usdc);
+        bool is_weth = _token_in == _weth || _token_out == _weth;
+        bool is_usdc = _token_in == _usdc || _token_out == _usdc;
         _path = new IVelodromeRouter.route[](is_weth || is_usdc ? 1 : 2);
 
         if (is_weth || is_usdc) {
             _path[0] = IVelodromeRouter.route(_token_in, _token_out, false);
         } else {
-            address intermediate = veloUseUsdcIntermediate ? usdc : weth;
+            bool _veloUseUsdcIntermediate = veloUseUsdcIntermediate;
+            address intermediate = _veloUseUsdcIntermediate ? _usdc : _weth;
             _path[0] = IVelodromeRouter.route(_token_in, intermediate, false);
-            _path[1] = IVelodromeRouter.route(intermediate, _token_out, true);
+            _path[1] = IVelodromeRouter.route(
+                intermediate,
+                _token_out,
+                _veloUseUsdcIntermediate && veloWantIsStable
+            );
         }
     }
 

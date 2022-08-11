@@ -33,7 +33,7 @@ def test_clone(
     assert strategy.estimatedTotalAssets() < strategy.minWant()
 
     # take funds to new strategy
-    vault.addStrategy(cloned_strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
+    vault.addStrategy(cloned_strategy, 10_000, 0, 2**256 - 1, 1_000, {"from": gov})
     utils.sleep(1)
     cloned_strategy.harvest({"from": gov})
     assert (

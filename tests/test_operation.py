@@ -23,12 +23,14 @@ def test_basic_operation(
         == strategy.targetCollatRatio()
     )
 
-    # tend()
     strategy.tend({"from": strategist})
 
     utils.strategy_status(vault, strategy)
 
     utils.sleep(3 * 24 * 3600)
+    utils.strategy_status(vault, strategy)
+    assert strategy.estimatedRewardsInWant() > 0
+
     strategy.harvest({"from": strategist})
 
     # withdrawal
@@ -39,9 +41,8 @@ def test_basic_operation(
     )
 
 
-@pytest.mark.skip
+#@pytest.mark.skip
 def test_withdraw(
-    chain,
     token,
     vault,
     strategy,
@@ -55,7 +56,7 @@ def test_withdraw(
     actions.user_deposit(user, vault, token, amount)
 
     # harvest
-    chain.sleep(1)
+    utils.sleep(1)
     strategy.harvest({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
@@ -65,18 +66,10 @@ def test_withdraw(
     strategy.harvest({"from": strategist})
     utils.sleep()
 
-    # remove this statement
-    # if not flashloans_active:
-    #    strategy.setCollateralTargets(
-    #        strategy.maxBorrowCollatRatio() - (0.02 * 1e18),
-    #        strategy.maxCollatRatio(),
-    #        strategy.maxBorrowCollatRatio(),
-    #        {"from": gov},
-    #    )
-
     # withdrawal
     for i in range(1, 10):
         print(i)
+        utils.sleep(1)
         utils.strategy_status(vault, strategy)
         vault.withdraw(int(amount / 10), user, 10_000, {"from": user})
         assert token.balanceOf(user) >= user_balance_before * i / 10
@@ -93,7 +86,6 @@ def test_withdraw(
 @pytest.mark.parametrize("percent_max_leverage", [1e-5, 0.1, 0.25, 0.5, 0.75, 1])
 def test_apr(
     chain,
-    accounts,
     gov,
     token,
     vault,
@@ -215,7 +207,7 @@ def test_increase_debt_ratio(
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
     assert token.balanceOf(strategy) <= strategy.minWant()
     assert (
-        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        pytest.approx(strategy.getCurrentCollatRatio(), abs=strategy.minRatio())
         == strategy.targetCollatRatio()
     )
 
@@ -249,7 +241,6 @@ def test_decrease_debt_ratio(
         == strategy.targetCollatRatio()
     )
 
-    # Two harvests needed to unlock
     vault.updateStrategyDebtRatio(strategy.address, ending_debt_ratio, {"from": gov})
     utils.sleep(1)
     strategy.harvest({"from": strategist})
@@ -263,7 +254,7 @@ def test_decrease_debt_ratio(
     )
     assert token.balanceOf(strategy) <= strategy.minWant()
     assert (
-        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        pytest.approx(strategy.getCurrentCollatRatio(), abs=strategy.minRatio())
         == strategy.targetCollatRatio()
     )
 
