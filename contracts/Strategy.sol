@@ -19,6 +19,7 @@ import "../interfaces/aave/v3/core/IPoolDataProvider.sol";
 import "../interfaces/aave/v3/core/IAToken.sol";
 import "../interfaces/aave/v3/core/IVariableDebtToken.sol";
 import {IPool as ILendingPool} from "../interfaces/aave/v3/core/IPool.sol";
+import "../interfaces/aave/v3/core/DataTypes.sol";
 import "../interfaces/aave/v3/periphery/IRewardsController.sol";
 
 contract Strategy is BaseStrategy {
@@ -113,12 +114,8 @@ contract Strategy is BaseStrategy {
         aToken = IAToken(_aToken);
         debtToken = IVariableDebtToken(_debtToken);
 
-        // Let collateral targets
-        (uint256 ltv, uint256 liquidationThreshold) =
-            getProtocolCollatRatios(address(want));
-        targetCollatRatio = ltv - DEFAULT_COLLAT_TARGET_MARGIN;
-        maxCollatRatio = liquidationThreshold - DEFAULT_COLLAT_MAX_MARGIN;
-        maxBorrowCollatRatio = ltv - DEFAULT_COLLAT_MAX_MARGIN;
+        // Set collateral targets
+        _autoConfigureLTVs();
 
         DECIMALS = 10**vault.decimals();
 
@@ -137,8 +134,7 @@ contract Strategy is BaseStrategy {
         uint256 _maxCollatRatio,
         uint256 _maxBorrowCollatRatio
     ) external onlyVaultManagers {
-        (uint256 ltv, uint256 liquidationThreshold) =
-            getProtocolCollatRatios(address(want));
+        (uint256 ltv, uint256 liquidationThreshold) = getProtocolCollatRatios();
         require(_targetCollatRatio < liquidationThreshold);
         require(_maxCollatRatio < liquidationThreshold);
         require(_targetCollatRatio < _maxCollatRatio);
@@ -159,6 +155,26 @@ contract Strategy is BaseStrategy {
         minWant = _minWant;
         minRatio = _minRatio;
         maxIterations = _maxIterations;
+    }
+
+    function setEMode(bool _enableEmode, bool _autosetLTVs)
+        external
+        onlyVaultManagers
+        returns (uint8 _emodeCategory)
+    {
+        _emodeCategory = uint8(
+            protocolDataProvider.getReserveEModeCategory(address(want))
+        );
+        lendingPool.setUserEMode(_enableEmode ? _emodeCategory : 0);
+        if (_autosetLTVs) {
+            _autoConfigureLTVs();
+        } else {
+            (uint256 ltv, uint256 liquidationThreshold) =
+                getProtocolCollatRatios();
+            require(targetCollatRatio < liquidationThreshold);
+            require(maxCollatRatio < liquidationThreshold);
+            require(maxBorrowCollatRatio < ltv);
+        }
     }
 
     function setRewardBehavior(uint256 _minRewardToSell)
@@ -367,8 +383,7 @@ contract Strategy is BaseStrategy {
             return false;
         }
         // pull the liquidation liquidationThreshold from protocol to be extra safu
-        (, uint256 liquidationThreshold) =
-            getProtocolCollatRatios(address(want));
+        (, uint256 liquidationThreshold) = getProtocolCollatRatios();
 
         uint256 currentCollatRatio = getCurrentCollatRatio();
 
@@ -506,10 +521,6 @@ contract Strategy is BaseStrategy {
             // borrow available amount
             _borrowWant(amount);
 
-            // track ourselves to save gas
-            //deposits = deposits + wantBalance;
-            //borrows = borrows + amount;
-            //wantBalance = amount;
             (deposits, borrows) = getCurrentPosition();
             wantBalance = balanceOfWant();
 
@@ -651,6 +662,11 @@ contract Strategy is BaseStrategy {
         return deposits - borrows;
     }
 
+    function getEmodeEnabled() public view returns (bool) {
+        uint256 _emodeCategory = lendingPool.getUserEMode(address(this));
+        return _emodeCategory != 0;
+    }
+
     // Section: swap helpers
 
     function tokenToWant(address token, uint256 amountIn)
@@ -745,13 +761,25 @@ contract Strategy is BaseStrategy {
 
     // Section: Interactions with Aave Protocol
 
-    function getProtocolCollatRatios(address token)
+    function getProtocolCollatRatios()
         internal
         view
         returns (uint256 ltv, uint256 liquidationThreshold)
     {
-        (, ltv, liquidationThreshold, , , , , , , ) = protocolDataProvider
-            .getReserveConfigurationData(token);
+        uint8 _emodeCategory = uint8(lendingPool.getUserEMode(address(this)));
+
+        if (_emodeCategory == 0) {
+            // emode disabled
+            (, ltv, liquidationThreshold, , , , , , , ) = protocolDataProvider
+                .getReserveConfigurationData(address(want));
+        } else {
+            DataTypes.EModeCategory memory _eModeCategoryData =
+                lendingPool.getEModeCategoryData(_emodeCategory);
+            ltv = uint256(_eModeCategoryData.ltv);
+            liquidationThreshold = uint256(
+                _eModeCategoryData.liquidationThreshold
+            );
+        }
         // convert bps to wad
         ltv = ltv * WAD_BPS_RATIO;
         liquidationThreshold = liquidationThreshold * WAD_BPS_RATIO;
@@ -782,6 +810,13 @@ contract Strategy is BaseStrategy {
                 rewardTokens.push(debtTokenRewards[i]);
             }
         }
+    }
+
+    function _autoConfigureLTVs() internal {
+        (uint256 ltv, uint256 liquidationThreshold) = getProtocolCollatRatios();
+        targetCollatRatio = ltv - DEFAULT_COLLAT_TARGET_MARGIN;
+        maxCollatRatio = liquidationThreshold - DEFAULT_COLLAT_MAX_MARGIN;
+        maxBorrowCollatRatio = ltv - DEFAULT_COLLAT_MAX_MARGIN;
     }
 
     // Section: LTV Math

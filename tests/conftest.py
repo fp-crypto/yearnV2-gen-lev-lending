@@ -165,6 +165,13 @@ def enable_healthcheck(strategy, gov):
     yield True
 
 
+@pytest.fixture(scope="function")
+def enable_emode(strategy, gov):
+    category = strategy.setEMode(True, True, {"from": gov}).return_value
+    print("EMode category:", category)
+    yield category
+
+
 @pytest.fixture(scope="session")
 def protocol_data_provider():
     yield Contract("0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654")  # ProtocolDataProvider

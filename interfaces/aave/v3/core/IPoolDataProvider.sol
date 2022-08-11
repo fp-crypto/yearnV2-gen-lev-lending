@@ -77,4 +77,14 @@ interface IPoolDataProvider {
             bool isActive,
             bool isFrozen
         );
+
+    /**
+     * Returns the efficiency mode category of the reserve
+     * @param asset The address of the underlying asset of the reserve
+     * @return The eMode id of the reserve
+     */
+    function getReserveEModeCategory(address asset)
+        external
+        view
+        returns (uint256);
 }

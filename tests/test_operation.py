@@ -41,7 +41,55 @@ def test_basic_operation(
     )
 
 
-#@pytest.mark.skip
+def test_emode_operation(
+    chain,
+    token,
+    vault,
+    strategy,
+    user,
+    strategist,
+    amount,
+    enable_emode,
+    RELATIVE_APPROX,
+):
+    if enable_emode == 0:
+        pytest.skip()  # skip test since this is a no op
+    # Deposit to the vault
+    user_balance_before = token.balanceOf(user)
+    actions.user_deposit(user, vault, token, amount)
+
+    # harvest
+    chain.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+
+    utils.strategy_status(vault, strategy)
+
+    strategy.tend({"from": strategist})
+    utils.strategy_status(vault, strategy)
+
+    assert token.balanceOf(strategy) <= strategy.minWant()
+    assert (
+        pytest.approx(strategy.getCurrentCollatRatio(), abs=strategy.minRatio())
+        == strategy.targetCollatRatio()
+    )
+
+    utils.strategy_status(vault, strategy)
+
+    utils.sleep(3 * 24 * 3600)
+    utils.strategy_status(vault, strategy)
+    assert strategy.estimatedRewardsInWant() > 0
+
+    strategy.harvest({"from": strategist})
+
+    # withdrawal
+    vault.withdraw({"from": user})
+    assert (
+        pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == user_balance_before
+        or token.balanceOf(user) > user_balance_before
+    )
+
+
 def test_withdraw(
     token,
     vault,
@@ -82,7 +130,6 @@ def test_withdraw(
     utils.strategy_status(vault, strategy)
 
 
-# @pytest.mark.parametrize("swap_router", [0])
 @pytest.mark.parametrize("percent_max_leverage", [1e-5, 0.1, 0.25, 0.5, 0.75, 1])
 def test_apr(
     chain,
@@ -93,15 +140,10 @@ def test_apr(
     user,
     strategist,
     amount,
-    # swap_router,
     percent_max_leverage,
+    enable_emode,
     RELATIVE_APPROX,
 ):
-    # strategy.setRewardBehavior(
-    #    #swap_router,
-    #    strategy.minRewardToSell(),
-    #    {"from": gov},
-    # )
     strategy.setCollateralTargets(
         strategy.maxBorrowCollatRatio()
         * percent_max_leverage,  # reduce leverage to 50% the max
@@ -115,6 +157,8 @@ def test_apr(
     # harvest
     chain.sleep(1)
     strategy.harvest({"from": strategist})
+    if percent_max_leverage == 1 and enable_emode != 0:
+        strategy.tend({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
     utils.sleep(7 * 24 * 3600)
