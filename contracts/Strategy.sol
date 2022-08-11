@@ -18,11 +18,13 @@ import "../interfaces/velodrome/IVelodromeRouter.sol";
 import "../interfaces/aave/v3/core/IPoolDataProvider.sol";
 import "../interfaces/aave/v3/core/IAToken.sol";
 import "../interfaces/aave/v3/core/IVariableDebtToken.sol";
-import {IPool as ILendingPool} from "../interfaces/aave/v3/core/IPool.sol";
+import "../interfaces/aave/v3/core/IPool.sol";
+import "../interfaces/aave/v3/core/IPoolAddressesProvider.sol";
 import "../interfaces/aave/v3/core/DataTypes.sol";
+import "../interfaces/aave/v3/core/IFlashLoanReceiver.sol";
 import "../interfaces/aave/v3/periphery/IRewardsController.sol";
 
-contract Strategy is BaseStrategy {
+contract Strategy is BaseStrategy, IFlashLoanReceiver {
     using Address for address;
     using SafeERC20 for IERC20;
 
@@ -31,8 +33,11 @@ contract Strategy is BaseStrategy {
         IPoolDataProvider(0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654);
     IRewardsController private constant rewardsController =
         IRewardsController(0x929EC64c34a17401F460460D4B9390518E5B473e);
-    ILendingPool private constant lendingPool =
-        ILendingPool(0x794a61358D6845594F94dc1DB02A252b5b4814aD);
+
+    IPool public constant POOL =
+        IPool(0x794a61358D6845594F94dc1DB02A252b5b4814aD);
+    IPoolAddressesProvider public constant ADDRESSES_PROVIDER =
+        IPoolAddressesProvider(0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb);
 
     // weth
     address private constant weth = 0x4200000000000000000000000000000000000006;
@@ -68,6 +73,7 @@ contract Strategy is BaseStrategy {
     bool public veloWantIsStable; // tell velo hop from usdc to want is stable
 
     uint8 public maxIterations;
+    bool public flashloanEnabled;
 
     bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
 
@@ -96,6 +102,7 @@ contract Strategy is BaseStrategy {
     function _initializeThis() internal {
         // initialize operational state
         maxIterations = 15;
+        flashloanEnabled = true;
 
         // mins
         minWant = 10000;
@@ -120,8 +127,8 @@ contract Strategy is BaseStrategy {
         DECIMALS = 10**vault.decimals();
 
         // approve spend protocol spend
-        approveMaxSpend(address(want), address(lendingPool));
-        approveMaxSpend(address(aToken), address(lendingPool));
+        approveMaxSpend(address(want), address(POOL));
+        approveMaxSpend(address(aToken), address(POOL));
 
         _updateRewardTokens();
         // approve swap router spend
@@ -157,6 +164,13 @@ contract Strategy is BaseStrategy {
         maxIterations = _maxIterations;
     }
 
+    function setFlashloanEnabled(bool _enableFlashloan)
+        external
+        onlyVaultManagers
+    {
+        flashloanEnabled = _enableFlashloan;
+    }
+
     function setEMode(bool _enableEmode, bool _autosetLTVs)
         external
         onlyVaultManagers
@@ -165,7 +179,7 @@ contract Strategy is BaseStrategy {
         _emodeCategory = uint8(
             protocolDataProvider.getReserveEModeCategory(address(want))
         );
-        lendingPool.setUserEMode(_enableEmode ? _emodeCategory : 0);
+        POOL.setUserEMode(_enableEmode ? _emodeCategory : 0);
         if (_autosetLTVs) {
             _autoConfigureLTVs();
         } else {
@@ -484,47 +498,52 @@ contract Strategy is BaseStrategy {
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
         uint256 wantBalance = balanceOfWant();
 
-        uint256 realSupply = deposits - borrows;
+        uint256 realSupply = deposits - borrows + wantBalance;
         uint256 newBorrow = getBorrowFromSupply(realSupply, targetCollatRatio);
         uint256 totalAmountToBorrow = newBorrow - borrows;
 
         uint8 _maxIterations = maxIterations;
         uint256 _minWant = minWant;
 
-        for (
-            uint8 i = 0;
-            i < _maxIterations && totalAmountToBorrow > _minWant;
-            i++
-        ) {
-            uint256 amount = totalAmountToBorrow;
-
-            // calculate how much borrow to take
-            //(deposits, borrows) = getCurrentPosition();
-            uint256 canBorrow =
-                getBorrowFromDeposit(
-                    deposits + wantBalance,
-                    maxBorrowCollatRatio
-                );
-
-            if (canBorrow <= borrows) {
-                break;
-            }
-            canBorrow = canBorrow - borrows;
-
-            if (canBorrow < amount) {
-                amount = canBorrow;
-            }
-
-            // deposit available want as collateral
+        if (flashloanEnabled) {
             _depositCollateral(wantBalance);
+            _flashloan(totalAmountToBorrow);
+        } else {
+            for (
+                uint8 i = 0;
+                i < _maxIterations && totalAmountToBorrow > _minWant;
+                i++
+            ) {
+                uint256 amount = totalAmountToBorrow;
 
-            // borrow available amount
-            _borrowWant(amount);
+                // calculate how much borrow to take
+                //(deposits, borrows) = getCurrentPosition();
+                uint256 canBorrow =
+                    getBorrowFromDeposit(
+                        deposits + wantBalance,
+                        maxBorrowCollatRatio
+                    );
 
-            (deposits, borrows) = getCurrentPosition();
-            wantBalance = balanceOfWant();
+                if (canBorrow <= borrows) {
+                    break;
+                }
+                canBorrow = canBorrow - borrows;
 
-            totalAmountToBorrow = totalAmountToBorrow - amount;
+                if (canBorrow < amount) {
+                    amount = canBorrow;
+                }
+
+                // deposit available want as collateral
+                _depositCollateral(wantBalance);
+
+                // borrow available amount
+                _borrowWant(amount);
+
+                (deposits, borrows) = getCurrentPosition();
+                wantBalance = balanceOfWant();
+
+                totalAmountToBorrow = totalAmountToBorrow - amount;
+            }
         }
 
         if (wantBalance >= minWant) {
@@ -578,27 +597,63 @@ contract Strategy is BaseStrategy {
 
     function _depositCollateral(uint256 amount) internal {
         if (amount == 0) return;
-        lendingPool.supply(address(want), amount, address(this), referral);
+        POOL.supply(address(want), amount, address(this), referral);
     }
 
     function _borrowWant(uint256 amount) internal {
         if (amount == 0) return;
-        lendingPool.borrow(address(want), amount, 2, referral, address(this));
+        POOL.borrow(address(want), amount, 2, referral, address(this));
     }
 
     function _withdrawCollateral(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
-        return lendingPool.withdraw(address(want), amount, address(this));
+        return POOL.withdraw(address(want), amount, address(this));
     }
 
     function _repayWant(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
-        return lendingPool.repay(address(want), amount, 2, address(this));
+        return POOL.repay(address(want), amount, 2, address(this));
     }
 
     function _repayWithATokens(uint256 amount) internal returns (uint256) {
         if (amount == 0) return 0;
-        return lendingPool.repayWithATokens(address(want), amount, 2);
+        return POOL.repayWithATokens(address(want), amount, 2);
+    }
+
+    function _flashloan(uint256 amount) internal {
+        if (amount == 0) return;
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(want);
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = amount;
+        uint256[] memory modes = new uint256[](1);
+        modes[0] = 2;
+        POOL.flashLoan(
+            address(this),
+            tokens,
+            amounts,
+            modes,
+            address(this),
+            "",
+            referral
+        );
+    }
+
+    // Section: flashloan callback
+
+    function executeOperation(
+        address[] calldata assets,
+        uint256[] calldata amounts,
+        uint256[] calldata premiums,
+        address initiator,
+        bytes calldata params
+    ) external returns (bool) {
+        require(initiator == address(this)); // dev: initiator must be this strategy
+        require(assets[0] == address(want)); // dev: loan asset must be want
+        require(amounts.length == 1);
+        uint256 amount = amounts[0];
+        _depositCollateral(amount);
+        return true;
     }
 
     // Section: interal balanceOf views
@@ -663,7 +718,7 @@ contract Strategy is BaseStrategy {
     }
 
     function getEmodeEnabled() public view returns (bool) {
-        uint256 _emodeCategory = lendingPool.getUserEMode(address(this));
+        uint256 _emodeCategory = POOL.getUserEMode(address(this));
         return _emodeCategory != 0;
     }
 
@@ -766,7 +821,7 @@ contract Strategy is BaseStrategy {
         view
         returns (uint256 ltv, uint256 liquidationThreshold)
     {
-        uint8 _emodeCategory = uint8(lendingPool.getUserEMode(address(this)));
+        uint8 _emodeCategory = uint8(POOL.getUserEMode(address(this)));
 
         if (_emodeCategory == 0) {
             // emode disabled
@@ -774,7 +829,7 @@ contract Strategy is BaseStrategy {
                 .getReserveConfigurationData(address(want));
         } else {
             DataTypes.EModeCategory memory _eModeCategoryData =
-                lendingPool.getEModeCategoryData(_emodeCategory);
+                POOL.getEModeCategoryData(_emodeCategory);
             ltv = uint256(_eModeCategoryData.ltv);
             liquidationThreshold = uint256(
                 _eModeCategoryData.liquidationThreshold

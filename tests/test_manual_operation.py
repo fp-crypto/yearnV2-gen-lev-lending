@@ -46,7 +46,6 @@ def test_emode_disable(
     with reverts():
         strategy.setEMode(False, True, {"from": gov})
 
-
     (
         _,
         ltv,

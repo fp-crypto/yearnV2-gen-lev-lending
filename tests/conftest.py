@@ -179,13 +179,13 @@ def protocol_data_provider():
 
 @pytest.fixture(scope="function", autouse=True)
 def set_min_max(strategy, token, management):
+    strategy.setMinsAndMaxs(
+        0.1 / token_prices[token.symbol()] * 10 ** token.decimals(),
+        strategy.minRatio(),
+        strategy.maxIterations(),
+        {"from": management},
+    )
     if token.address == token_addresses["DAI"]:
-        strategy.setMinsAndMaxs(
-            0.1 * 1e18,
-            strategy.minRatio(),
-            strategy.maxIterations(),
-            {"from": management},
-        )
         strategy.setVeloBehavior(True, True, {"from": management})
 
 

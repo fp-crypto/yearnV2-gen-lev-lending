@@ -3,6 +3,21 @@ import pytest
 from utils import actions, utils
 
 
+@pytest.fixture(
+    params=[
+        True,
+        False,
+    ],
+    scope="function",
+    autouse=True,
+)
+def flashloan_enabled(request, strategy, gov):
+    enable = request.param
+    strategy.setFlashloanEnabled(enable, {"from": gov})
+    assert strategy.flashloanEnabled() == enable
+    yield enable
+
+
 def test_basic_operation(
     chain, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
 ):
