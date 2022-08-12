@@ -24,7 +24,9 @@ import "../interfaces/aave/v3/core/DataTypes.sol";
 import "../interfaces/aave/v3/core/IFlashLoanReceiver.sol";
 import "../interfaces/aave/v3/periphery/IRewardsController.sol";
 
-contract Strategy is BaseStrategy, IFlashLoanReceiver {
+import "./ySwapper.sol";
+
+contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
     using Address for address;
     using SafeERC20 for IERC20;
 
@@ -47,7 +49,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver {
     // Supply and borrow tokens
     IAToken public aToken;
     IVariableDebtToken public debtToken;
-    address[] public rewardTokens;
+    address[] private rewardTokens;
 
     // SWAP routers
     IVelodromeRouter private constant VELODROME_ROUTER =
@@ -191,18 +193,12 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver {
         }
     }
 
-    function setRewardBehavior(uint256 _minRewardToSell)
-        external
-        //(SwapRouter _swapRouter, uint256 _minRewardToSell)
-        onlyVaultManagers
-    {
-        minRewardToSell = _minRewardToSell;
-    }
-
-    function setVeloBehavior(
+    function setRewardBehavior(
+        uint256 _minRewardToSell,
         bool _veloUseUsdcIntermediate,
         bool _veloWantIsStable
     ) external onlyVaultManagers {
+        minRewardToSell = _minRewardToSell;
         veloUseUsdcIntermediate = _veloUseUsdcIntermediate;
         veloWantIsStable = _veloWantIsStable;
     }
@@ -679,7 +675,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver {
         )
     {
         _rewardTokens = rewardTokens;
-        _rewardBalances = new uint256[](rewardTokens.length);
+        _rewardBalances = new uint256[](_rewardTokens.length);
         for (uint256 i = 0; i < _rewardTokens.length; i++) {
             _rewardBalances[i] = IERC20(_rewardTokens[i]).balanceOf(
                 address(this)
@@ -722,6 +718,43 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver {
         return _emodeCategory != 0;
     }
 
+    function getRewardTokens()
+        external
+        view
+        returns (address[] memory _rewardTokens)
+    {
+        return rewardTokens;
+    }
+
+    // Section: yswaps
+
+    function getYSwapTokens()
+        internal
+        view
+        override
+        returns (address[] memory swapFrom, address[] memory swapTo)
+    {
+        swapFrom = rewardTokens;
+        swapTo = new address[](1);
+        swapTo[0] = address(want);
+    }
+
+    function removeTradeFactoryPermissions()
+        external
+        override
+        onlyVaultManagers
+    {
+        _removeTradeFactory();
+    }
+
+    function updateTradeFactoryPermissions(address _tradeFactory)
+        external
+        override
+        onlyGovernance
+    {
+        _updateTradeFactory(_tradeFactory);
+    }
+
     // Section: swap helpers
 
     function tokenToWant(address token, uint256 amountIn)
@@ -750,24 +783,6 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver {
         returns (uint256)
     {
         return tokenToWant(weth, _amtInWei);
-    }
-
-    function getTokenOutPathV2(address _token_in, address _token_out)
-        internal
-        pure
-        returns (address[] memory _path)
-    {
-        bool is_weth =
-            _token_in == address(weth) || _token_out == address(weth);
-        _path = new address[](is_weth ? 2 : 3);
-        _path[0] = _token_in;
-
-        if (is_weth) {
-            _path[1] = _token_out;
-        } else {
-            _path[1] = address(weth);
-            _path[2] = _token_out;
-        }
     }
 
     function getTokenOutPathVelo(address _token_in, address _token_out)

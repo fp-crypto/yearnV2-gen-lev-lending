@@ -125,6 +125,12 @@ def weth():
 
 
 @pytest.fixture
+def usdc():
+    token_address = token_addresses["USDC"]
+    yield Contract(token_address)
+
+
+@pytest.fixture
 def weth_amount(user, weth):
     weth_amount = 10 ** weth.decimals()
     weth.transfer(user, weth_amount, {"from": whale_addresses["WETH"]})
@@ -186,7 +192,9 @@ def set_min_max(strategy, token, management):
         {"from": management},
     )
     if token.address == token_addresses["DAI"]:
-        strategy.setVeloBehavior(True, True, {"from": management})
+        strategy.setRewardBehavior(
+            strategy.minRewardToSell(), True, True, {"from": management}
+        )
 
 
 @pytest.fixture(scope="session", autouse=True)

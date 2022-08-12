@@ -34,6 +34,7 @@ def test_migration(
     utils.sleep(1)
 
     vault.migrateStrategy(strategy, new_strategy, {"from": gov})
+    utils.sleep(1)
     vault.updateStrategyDebtRatio(new_strategy, 10_000, {"from": gov})
     new_strategy.harvest({"from": gov})
     utils.sleep(1)
