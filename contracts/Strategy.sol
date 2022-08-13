@@ -123,6 +123,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         aToken = IAToken(_aToken);
         debtToken = IVariableDebtToken(_debtToken);
 
+        _setEMode(true); // use emode if it's available
         // Set collateral targets
         _autoConfigureLTVs();
 
@@ -176,12 +177,8 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
     function setEMode(bool _enableEmode, bool _autosetLTVs)
         external
         onlyVaultManagers
-        returns (uint8 _emodeCategory)
     {
-        _emodeCategory = uint8(
-            protocolDataProvider.getReserveEModeCategory(address(want))
-        );
-        POOL.setUserEMode(_enableEmode ? _emodeCategory : 0);
+        _setEMode(_enableEmode);
         if (_autosetLTVs) {
             _autoConfigureLTVs();
         } else {
@@ -454,6 +451,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
     function updateRewardTokens() external onlyVaultManagers {
         _updateRewardTokens();
+        approveRouterRewardSpend();
     }
 
     // INTERNAL ACTIONS
@@ -502,7 +500,6 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         uint256 _minWant = minWant;
 
         if (flashloanEnabled) {
-            _depositCollateral(wantBalance);
             _flashloan(totalAmountToBorrow);
         } else {
             for (
@@ -550,21 +547,18 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
     function _leverDownTo(uint256 newAmountBorrowed, uint256 currentBorrowed)
         internal
     {
-        (uint256 deposits, uint256 borrows) = getCurrentPosition();
-
         if (currentBorrowed > newAmountBorrowed) {
             uint256 wantBalance = balanceOfWant();
             uint256 totalRepayAmount = currentBorrowed - newAmountBorrowed;
             uint256 _maxCollatRatio = maxCollatRatio;
-            uint256 repaid =
-                _repayWithATokens(
-                    totalRepayAmount < borrows
-                        ? totalRepayAmount
-                        : type(uint256).max
-                );
+            _repayWithATokens(
+                totalRepayAmount < currentBorrowed
+                    ? totalRepayAmount
+                    : type(uint256).max
+            );
         }
 
-        (deposits, borrows) = getCurrentPosition();
+        (uint256 deposits, uint256 borrows) = getCurrentPosition();
         // deposit back to get targetCollatRatio (we always need to leave this in this ratio)
         uint256 _targetCollatRatio = targetCollatRatio;
         uint256 targetDeposit =
@@ -635,6 +629,13 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         );
     }
 
+    function _setEMode(bool _enableEmode) internal {
+        uint8 _emodeCategory =
+            uint8(protocolDataProvider.getReserveEModeCategory(address(want)));
+        if (_emodeCategory == 0) return;
+        POOL.setUserEMode(_enableEmode ? _emodeCategory : 0);
+    }
+
     // Section: flashloan callback
 
     function executeOperation(
@@ -648,7 +649,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         require(assets[0] == address(want)); // dev: loan asset must be want
         require(amounts.length == 1);
         uint256 amount = amounts[0];
-        _depositCollateral(amount);
+        _depositCollateral(balanceOfWant());
         return true;
     }
 
@@ -664,23 +665,6 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
     function balanceOfDebtToken() internal view returns (uint256) {
         return IERC20(address(debtToken)).balanceOf(address(this));
-    }
-
-    function balanceOfRewards()
-        internal
-        view
-        returns (
-            address[] memory _rewardTokens,
-            uint256[] memory _rewardBalances
-        )
-    {
-        _rewardTokens = rewardTokens;
-        _rewardBalances = new uint256[](_rewardTokens.length);
-        for (uint256 i = 0; i < _rewardTokens.length; i++) {
-            _rewardBalances[i] = IERC20(_rewardTokens[i]).balanceOf(
-                address(this)
-            );
-        }
     }
 
     // Section: Current Position Views
@@ -735,8 +719,10 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         returns (address[] memory swapFrom, address[] memory swapTo)
     {
         swapFrom = rewardTokens;
-        swapTo = new address[](1);
-        swapTo[0] = address(want);
+        swapTo = new address[](swapFrom.length);
+        for (uint256 i; i < swapTo.length; ++i) {
+            swapTo[i] = address(want);
+        }
     }
 
     function removeTradeFactoryPermissions()
@@ -766,14 +752,12 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
             return amountIn;
         }
 
-        if (router == address(VELODROME_ROUTER)) {
-            uint256[] memory amounts =
-                VELODROME_ROUTER.getAmountsOut(
-                    amountIn,
-                    getTokenOutPathVelo(token, address(want))
-                );
-            amountOut = amounts[amounts.length - 1];
-        }
+        uint256[] memory amounts =
+            VELODROME_ROUTER.getAmountsOut(
+                amountIn,
+                getTokenOutPathVelo(token, address(want))
+            );
+        amountOut = amounts[amounts.length - 1];
     }
 
     function ethToWant(uint256 _amtInWei)
@@ -818,15 +802,13 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         if (amountIn == 0) {
             return;
         }
-        if (router == address(VELODROME_ROUTER)) {
-            VELODROME_ROUTER.swapExactTokensForTokens(
-                amountIn,
-                minOut,
-                getTokenOutPathVelo(token, address(want)),
-                address(this),
-                block.timestamp
-            );
-        }
+        VELODROME_ROUTER.swapExactTokensForTokens(
+            amountIn,
+            minOut,
+            getTokenOutPathVelo(token, address(want)),
+            address(this),
+            block.timestamp
+        );
     }
 
     // Section: Interactions with Aave Protocol

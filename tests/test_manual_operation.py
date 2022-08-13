@@ -1,6 +1,6 @@
 from utils import actions, utils
 import pytest
-from brownie import reverts
+from brownie import Contract, reverts
 
 
 def test_emode_disable(
@@ -11,11 +11,11 @@ def test_emode_disable(
     gov,
     strategist,
     amount,
-    enable_emode,
+    pool,
     protocol_data_provider,
     RELATIVE_APPROX,
 ):
-    if enable_emode == 0:
+    if pool.getUserEMode(strategy) == 0:
         pytest.skip()  # skip test since this is a no op
     # Deposit to the vault
     user_balance_before = token.balanceOf(user)
