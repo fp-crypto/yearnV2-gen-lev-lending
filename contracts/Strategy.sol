@@ -284,10 +284,6 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
             if (amountAvailable >= amountRequired) {
                 _debtPayment = _debtOutstanding;
-                // profit remains unchanged unless there is not enough to pay it
-                if (amountRequired - _debtPayment < _profit) {
-                    _profit = amountRequired - _debtPayment;
-                }
             } else {
                 // we were not able to free enough funds
                 if (amountAvailable < _debtOutstanding) {
@@ -305,10 +301,6 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
             }
         } else {
             _debtPayment = _debtOutstanding;
-            // profit remains unchanged unless there is not enough to pay it
-            if (amountAvailable - _debtPayment < _profit) {
-                _profit = amountAvailable - _debtPayment;
-            }
         }
     }
 
