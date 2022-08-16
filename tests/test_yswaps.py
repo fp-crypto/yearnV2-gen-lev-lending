@@ -57,7 +57,7 @@ def test_yswaps(
     reward_tokens = [
         Contract(reward_token) for reward_token in strategy.getRewardTokens()
     ]
-    router = WeirollContract.createContract(Contract(strategy.router()))
+    router = WeirollContract.createContract(Contract(strategy.VELODROME_ROUTER()))
     receiver = strategy
     token_out = token
 

@@ -31,9 +31,9 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
     using SafeERC20 for IERC20;
 
     // protocol address
-    IPoolDataProvider private constant protocolDataProvider =
+    IPoolDataProvider private constant PROTOCOL_DATA_PROVIDER =
         IPoolDataProvider(0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654);
-    IRewardsController private constant rewardsController =
+    IRewardsController private constant REWARDS_CONTROLLER =
         IRewardsController(0x929EC64c34a17401F460460D4B9390518E5B473e);
 
     IPool public constant POOL =
@@ -42,9 +42,9 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         IPoolAddressesProvider(0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb);
 
     // weth
-    address private constant weth = 0x4200000000000000000000000000000000000006;
+    address private constant WETH = 0x4200000000000000000000000000000000000006;
     // usdc
-    address private constant usdc = 0x7F5c764cBc14f9669B88837ca1490cCa17c31607;
+    address private constant USDC = 0x7F5c764cBc14f9669B88837ca1490cCa17c31607;
 
     // Supply and borrow tokens
     IAToken public aToken;
@@ -76,13 +76,12 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
     bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
 
-    uint16 private constant referral = 0;
+    uint16 private constant REFERRAL = 0;
 
     uint256 private constant MAX_BPS = 1e4;
     uint256 private constant WAD_BPS_RATIO = 1e14;
     uint256 private constant COLLATERAL_RATIO_PRECISION = 1 ether;
     uint256 private constant PESSIMISM_FACTOR = 1000;
-    uint256 private DECIMALS;
 
     constructor(address _vault) BaseStrategy(_vault) {
         _initializeThis();
@@ -114,7 +113,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
         // Set lending+borrowing tokens
         (address _aToken, , address _debtToken) =
-            protocolDataProvider.getReserveTokensAddresses(address(want));
+            PROTOCOL_DATA_PROVIDER.getReserveTokensAddresses(address(want));
         require(_aToken != address(0));
         aToken = IAToken(_aToken);
         debtToken = IVariableDebtToken(_debtToken);
@@ -122,8 +121,6 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         _setEMode(true); // use emode if it's available
         // Set collateral targets
         _autoConfigureLTVs();
-
-        DECIMALS = 10**vault.decimals();
 
         // approve spend protocol spend
         approveMaxSpend(address(want), address(POOL));
@@ -219,7 +216,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         returns (uint256 rewardBalanceInWant)
     {
         address[] memory assets = getAssets();
-        IRewardsController _rewardsController = rewardsController;
+        IRewardsController _rewardsController = REWARDS_CONTROLLER;
 
         for (uint256 i; i < rewardTokens.length; ++i) {
             uint256 rewardBalance =
@@ -445,7 +442,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
     // INTERNAL ACTIONS
 
     function _claimRewards() internal returns (uint256) {
-        IRewardsController _rewardsController = rewardsController;
+        IRewardsController _rewardsController = REWARDS_CONTROLLER;
         _rewardsController.claimAllRewards(getAssets(), address(this));
     }
 
@@ -536,9 +533,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         internal
     {
         if (currentBorrowed > newAmountBorrowed) {
-            uint256 wantBalance = balanceOfWant();
             uint256 totalRepayAmount = currentBorrowed - newAmountBorrowed;
-            uint256 _maxCollatRatio = maxCollatRatio;
             _repayWithATokens(
                 totalRepayAmount < currentBorrowed
                     ? totalRepayAmount
@@ -575,12 +570,12 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
     function _depositCollateral(uint256 amount) internal {
         if (amount == 0) return;
-        POOL.supply(address(want), amount, address(this), referral);
+        POOL.supply(address(want), amount, address(this), REFERRAL);
     }
 
     function _borrowWant(uint256 amount) internal {
         if (amount == 0) return;
-        POOL.borrow(address(want), amount, 2, referral, address(this));
+        POOL.borrow(address(want), amount, 2, REFERRAL, address(this));
     }
 
     function _withdrawCollateral(uint256 amount) internal returns (uint256) {
@@ -613,13 +608,15 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
             modes,
             address(this),
             "",
-            referral
+            REFERRAL
         );
     }
 
     function _setEMode(bool _enableEmode) internal {
         uint8 _emodeCategory =
-            uint8(protocolDataProvider.getReserveEModeCategory(address(want)));
+            uint8(
+                PROTOCOL_DATA_PROVIDER.getReserveEModeCategory(address(want))
+            );
         if (_emodeCategory == 0) return;
         POOL.setUserEMode(_enableEmode ? _emodeCategory : 0);
     }
@@ -636,7 +633,6 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         require(initiator == address(this)); // dev: initiator must be this strategy
         require(assets[0] == address(want)); // dev: loan asset must be want
         require(amounts.length == 1);
-        uint256 amount = amounts[0];
         _depositCollateral(balanceOfWant());
         return true;
     }
@@ -754,29 +750,29 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         override
         returns (uint256)
     {
-        return tokenToWant(weth, _amtInWei);
+        return tokenToWant(WETH, _amtInWei);
     }
 
-    function getTokenOutPathVelo(address _token_in, address _token_out)
+    function getTokenOutPathVelo(address _tokenIn, address _tokenOut)
         internal
         view
         returns (IVelodromeRouter.route[] memory _path)
     {
-        address _weth = address(weth);
-        address _usdc = address(usdc);
-        bool is_weth = _token_in == _weth || _token_out == _weth;
-        bool is_usdc = _token_in == _usdc || _token_out == _usdc;
-        _path = new IVelodromeRouter.route[](is_weth || is_usdc ? 1 : 2);
+        address _weth = address(WETH);
+        address _usdc = address(USDC);
+        bool isWeth = _tokenIn == _weth || _tokenOut == _weth;
+        bool isUsdc = _tokenIn == _usdc || _tokenOut == _usdc;
+        _path = new IVelodromeRouter.route[](isWeth || isUsdc ? 1 : 2);
 
-        if (is_weth || is_usdc) {
-            _path[0] = IVelodromeRouter.route(_token_in, _token_out, false);
+        if (isWeth || isUsdc) {
+            _path[0] = IVelodromeRouter.route(_tokenIn, _tokenOut, false);
         } else {
             bool _veloUseUsdcIntermediate = veloUseUsdcIntermediate;
             address intermediate = _veloUseUsdcIntermediate ? _usdc : _weth;
-            _path[0] = IVelodromeRouter.route(_token_in, intermediate, false);
+            _path[0] = IVelodromeRouter.route(_tokenIn, intermediate, false);
             _path[1] = IVelodromeRouter.route(
                 intermediate,
-                _token_out,
+                _tokenOut,
                 _veloUseUsdcIntermediate && veloWantIsStable
             );
         }
@@ -810,7 +806,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
         if (_emodeCategory == 0) {
             // emode disabled
-            (, ltv, liquidationThreshold, , , , , , , ) = protocolDataProvider
+            (, ltv, liquidationThreshold, , , , , , , ) = PROTOCOL_DATA_PROVIDER
                 .getReserveConfigurationData(address(want));
         } else {
             DataTypes.EModeCategory memory _eModeCategoryData =
@@ -832,7 +828,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
     }
 
     function _updateRewardTokens() internal {
-        IRewardsController _rewardsController = rewardsController;
+        IRewardsController _rewardsController = REWARDS_CONTROLLER;
         rewardTokens = _rewardsController.getRewardsByAsset(address(aToken));
         uint256 rewardTokenCount = rewardTokens.length;
 
