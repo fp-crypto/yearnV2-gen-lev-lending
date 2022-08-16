@@ -52,11 +52,8 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
     address[] private rewardTokens;
 
     // SWAP routers
-    IVelodromeRouter private constant VELODROME_ROUTER =
+    IVelodromeRouter public constant VELODROME_ROUTER =
         IVelodromeRouter(0xa132DAB612dB5cB9fC9Ac426A0Cc215A3423F9c9);
-
-    // Swap Router
-    address public router;
 
     // OPS State Variables
     uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
@@ -111,7 +108,6 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         minRatio = 0.005 ether;
         minRewardToSell = 1e15;
 
-        router = address(VELODROME_ROUTER);
         veloUseUsdcIntermediate = true;
 
         alreadyAdjusted = false;
@@ -894,7 +890,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
     function approveRouterRewardSpend() internal {
         for (uint256 i = 0; i < rewardTokens.length; i++) {
-            approveMaxSpend(rewardTokens[i], router);
+            approveMaxSpend(rewardTokens[i], address(VELODROME_ROUTER));
         }
     }
 

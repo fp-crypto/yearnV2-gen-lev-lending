@@ -10,7 +10,7 @@ contract LevAaveFactory {
     event Cloned(address indexed clone);
     event Deployed(address indexed original);
 
-    constructor(address _vault) public {
+    constructor(address _vault) {
         Strategy _original = new Strategy(_vault);
         emit Deployed(address(_original));
 
