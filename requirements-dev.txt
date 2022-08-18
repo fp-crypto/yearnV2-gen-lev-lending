@@ -1,2 +1,2 @@
-git+https://git@github.com/eth-brownie/brownie.git@4ae5f52
+eth-brownie>=1.19,<2.0.0
 weiroll-py==0.1.0
