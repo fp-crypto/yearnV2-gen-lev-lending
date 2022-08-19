@@ -4,12 +4,7 @@ pragma solidity ^0.8.12;
 
 import {BaseStrategy} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
 
-import {Address} from "@openzeppelin/contracts/utils/Address.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {
-    SafeERC20
-} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
+import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import "../interfaces/velodrome/IVelodromeRouter.sol";
@@ -41,9 +36,11 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         IPoolAddressesProvider(0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb);
 
     // weth
-    address private constant WETH = 0x4200000000000000000000000000000000000006;
+    address private constant WETH =
+        address(0x4200000000000000000000000000000000000006);
     // usdc
-    address private constant USDC = 0x7F5c764cBc14f9669B88837ca1490cCa17c31607;
+    address private constant USDC =
+        address(0x7F5c764cBc14f9669B88837ca1490cCa17c31607);
 
     // Supply and borrow tokens
     IAToken public aToken;
@@ -293,6 +290,11 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
             }
         } else {
             _debtPayment = _debtOutstanding;
+            // profit remains unchanged unless there is not enough to pay it
+            // should only happen when debtOutstanding == 0
+            if (amountAvailable - _debtPayment < _profit) {
+                _profit = amountAvailable - _debtPayment;
+            }
         }
     }
 
@@ -394,7 +396,9 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         (_amountFreed, ) = liquidatePosition(type(uint256).max);
     }
 
-    function prepareMigration(address _newStrategy) internal override {
+    function prepareMigration(
+        address /* _newStrategy */
+    ) internal override {
         require(getCurrentSupply() < minWant);
     }
 
@@ -440,12 +444,12 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
     // INTERNAL ACTIONS
 
-    function _claimRewards() internal returns (uint256) {
+    function _claimRewards() internal {
         IRewardsController _rewardsController = REWARDS_CONTROLLER;
         _rewardsController.claimAllRewards(getAssets(), address(this));
     }
 
-    function _sellRewards() internal returns (uint256) {
+    function _sellRewards() internal {
         // sell reward for want
         for (uint256 i; i < rewardTokens.length; ++i) {
             uint256 rewardBalance =
@@ -484,7 +488,6 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         uint256 _minWant = minWant;
 
         if (flashloanEnabled) {
-            _depositCollateral(balanceOfWant()); // deposit before flashloan so funds are available for flashloan
             _flashloan(totalAmountToBorrow);
         } else {
             for (
@@ -626,9 +629,9 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
     function executeOperation(
         address[] calldata assets,
         uint256[] calldata amounts,
-        uint256[] calldata premiums,
+        uint256[] calldata, /* premiums */
         address initiator,
-        bytes calldata params
+        bytes calldata /* params */
     ) external returns (bool) {
         require(initiator == address(this)); // dev: initiator must be this strategy
         require(assets[0] == address(want)); // dev: loan asset must be want
