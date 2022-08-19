@@ -484,6 +484,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         uint256 _minWant = minWant;
 
         if (flashloanEnabled) {
+            _depositCollateral(balanceOfWant()); // deposit before flashloan so funds are available for flashloan
             _flashloan(totalAmountToBorrow);
         } else {
             for (
@@ -597,7 +598,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         address[] memory tokens = new address[](1);
         tokens[0] = address(want);
         uint256[] memory amounts = new uint256[](1);
-        amounts[0] = amount;
+        amounts[0] = Math.min(amount, want.balanceOf(address(aToken))); // max loanable is the amount of want held by aave
         uint256[] memory modes = new uint256[](1);
         modes[0] = 2;
         POOL.flashLoan(
