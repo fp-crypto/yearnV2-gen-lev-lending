@@ -197,7 +197,7 @@ def test_manual_deleverage_to_zero_with_atokens(
 
     utils.strategy_status(vault, strategy)
 
-    strategy.manualDeleverage(2 ** 256 - 1, True, {"from": gov})
+    strategy.manualDeleverage(2**256 - 1, True, {"from": gov})
     utils.strategy_status(vault, strategy)
     utils.sleep(1)
 
