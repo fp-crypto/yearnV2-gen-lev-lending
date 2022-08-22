@@ -465,13 +465,18 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
         (uint256 deposits, uint256 borrows) = getCurrentPosition();
 
-        uint256 realAssets = deposits - borrows;
-        uint256 amountRequired = Math.min(amountToFree, realAssets);
-        uint256 newSupply = realAssets - amountRequired;
-        uint256 newBorrow = getBorrowFromSupply(newSupply, targetCollatRatio);
+        if (borrows == 0) {
+            _withdrawCollateral(Math.min(amountToFree, deposits));
+        } else {
+            uint256 realAssets = deposits - borrows;
+            uint256 amountRequired = Math.min(amountToFree, realAssets);
+            uint256 newSupply = realAssets - amountRequired;
+            uint256 newBorrow =
+                getBorrowFromSupply(newSupply, targetCollatRatio);
 
-        // repay required amount
-        _leverDownTo(newBorrow, borrows);
+            // repay required amount
+            _leverDownTo(newBorrow, borrows);
+        }
 
         return balanceOfWant();
     }
@@ -865,6 +870,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         pure
         returns (uint256)
     {
+        if (collatRatio == 0) return 0;
         return (deposit * collatRatio) / COLLATERAL_RATIO_PRECISION;
     }
 
@@ -873,6 +879,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         pure
         returns (uint256)
     {
+        if (collatRatio == 0) return type(uint256).max;
         return (borrow * COLLATERAL_RATIO_PRECISION) / collatRatio;
     }
 
@@ -881,6 +888,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         pure
         returns (uint256)
     {
+        if (collatRatio == 0) return 0;
         return
             (supply * collatRatio) / (COLLATERAL_RATIO_PRECISION - collatRatio);
     }
