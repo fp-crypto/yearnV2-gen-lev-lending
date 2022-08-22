@@ -178,6 +178,43 @@ def test_emergency_exit(
     assert strategy.estimatedTotalAssets() < amount
 
 
+def test_harvest_with_credit(
+    token,
+    vault,
+    strategy,
+    user,
+    strategist,
+    amount,
+    RELATIVE_APPROX,
+):
+    # Deposit to the vault
+    user_balance_before = token.balanceOf(user)
+    half_amount = amount / 2
+    actions.user_deposit(user, vault, token, half_amount)
+
+    # harvest
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert (
+        pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
+        == half_amount
+    )
+
+    utils.sleep(1 * 24 * 3600)
+
+    actions.user_deposit(user, vault, token, token.balanceOf(user))
+    assert vault.creditAvailable(strategy) > 0
+
+    utils.strategy_status(vault, strategy)
+    strategy.harvest({"from": strategist})
+    assert token.balanceOf(strategy) <= strategy.minWant()
+    utils.sleep()
+
+    vault.withdraw({"from": user})
+    assert token.balanceOf(user) > user_balance_before
+    utils.strategy_status(vault, strategy)
+
+
 @pytest.mark.parametrize(
     "starting_debt_ratio", [100, 500, 1_000, 2_500, 5_000, 7_500, 9_500, 9_900]
 )
