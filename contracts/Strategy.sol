@@ -95,7 +95,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
     function _initializeThis() internal {
         // initialize operational state
-        maxIterations = 15;
+        maxIterations = 14;
         flashloanEnabled = true;
 
         // mins
@@ -262,6 +262,9 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         uint256 amountAvailable = _balanceOfWant;
         uint256 amountRequired = _debtOutstanding + _profit;
 
+        // if should only try to delever here if there is debt to pay down
+        // and we don't have enough loose to pay the debt
+        // LTV adjustments can happen in adjustPosition
         if (_debtOutstanding != 0 && amountRequired > amountAvailable) {
             // we need to free funds
             // we dismiss losses here, they cannot be generated from withdrawal
