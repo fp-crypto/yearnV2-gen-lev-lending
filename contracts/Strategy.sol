@@ -641,6 +641,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         address initiator,
         bytes calldata /* params */
     ) external returns (bool) {
+        require(address(POOL) == msg.sender); // dev: callers must be the aave pool
         require(initiator == address(this)); // dev: initiator must be this strategy
         require(assets[0] == address(want)); // dev: loan asset must be want
         require(amounts.length == 1);
