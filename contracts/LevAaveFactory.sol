@@ -32,7 +32,7 @@ contract LevAaveFactory {
             );
     }
 
-    function cloneLevGeist(address _vault)
+    function cloneLevAave(address _vault)
         external
         returns (address payable newStrategy)
     {
