@@ -23,7 +23,7 @@ def test_clone(
     strategy.harvest({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
-    cloned_strategy = factory.cloneLevGeist(vault, {"from": strategist}).return_value
+    cloned_strategy = factory.cloneLevAave(vault, {"from": strategist}).return_value
     cloned_strategy = Strategy.at(cloned_strategy)
 
     # free funds from old strategy
@@ -33,7 +33,7 @@ def test_clone(
     assert strategy.estimatedTotalAssets() < strategy.minWant()
 
     # take funds to new strategy
-    vault.addStrategy(cloned_strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
+    vault.addStrategy(cloned_strategy, 10_000, 0, 2**256 - 1, 1_000, {"from": gov})
     utils.sleep(1)
     cloned_strategy.harvest({"from": gov})
     assert (

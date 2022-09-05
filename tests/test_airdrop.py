@@ -1,10 +1,9 @@
-from utils import actions, checks, utils
+from utils import actions
 import pytest
 
 
 def test_airdrop(
     chain,
-    accounts,
     token,
     vault,
     strategy,

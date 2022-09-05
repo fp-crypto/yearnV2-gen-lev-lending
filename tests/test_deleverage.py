@@ -1,11 +1,9 @@
-import brownie
-from brownie import Contract
 import pytest
-from utils import actions, checks, utils
+from utils import actions, utils
 
 
 def test_deleverage_to_zero(
-    chain, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
@@ -40,8 +38,48 @@ def test_deleverage_to_zero(
     )
 
 
+def test_ltv_to_zero(
+    gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+):
+    # Deposit to the vault and harvest
+    actions.user_deposit(user, vault, token, amount)
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+
+    utils.sleep(7 * 24 * 3600)
+
+    utils.strategy_status(vault, strategy)
+
+    strategy.setCollateralTargets(
+        0, strategy.maxCollatRatio(), strategy.maxBorrowCollatRatio(), {"from": gov}
+    )
+
+    utils.strategy_status(vault, strategy)
+
+    utils.sleep()
+    strategy.harvest({"from": strategist})
+
+    utils.strategy_status(vault, strategy)
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+    assert (
+        pytest.approx(
+            vault.strategies(strategy).dict()["totalLoss"], rel=RELATIVE_APPROX
+        )
+        == 0
+    )
+
+    # withdrawal
+    vault.withdraw({"from": user})
+    assert (
+        pytest.approx(token.balanceOf(user), rel=RELATIVE_APPROX) == amount
+        or token.balanceOf(user) > amount
+    )
+
+
 def test_deleverage_parameter_change(
-    chain, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
@@ -95,7 +133,7 @@ def test_manual_deleverage_to_zero(
 
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
-    chain.sleep(1 * 3600)
+    chain.sleep(24 * 3600)
 
     utils.strategy_status(vault, strategy)
 
@@ -107,7 +145,7 @@ def test_manual_deleverage_to_zero(
         theo_min_deposit = borrow / (strategy.maxCollatRatio() / 1e18)
         step_size = min(int(deposit - theo_min_deposit), borrow)
 
-        strategy.manualDeleverage(step_size, {"from": gov})
+        strategy.manualDeleverage(step_size, False, {"from": gov})
 
         n += 1
 
@@ -124,15 +162,57 @@ def test_manual_deleverage_to_zero(
         deposits = strategy.getCurrentPosition().dict()["deposits"]
     assert strategy.getCurrentSupply() <= strategy.minWant()
 
-    strategy.setRewardBehavior(0, 1e6, {"from": gov})
     if strategy.estimatedRewardsInWant() >= strategy.minRewardToSell():
-        strategy.manualClaimAndSellRewards({"from": gov})
+        strategy.manualClaimRewards({"from": gov})
+        strategy.manualSellRewards({"from": gov})
 
     utils.sleep()
     utils.strategy_status(vault, strategy)
+
+    vault.revokeStrategy(strategy.address, {"from": gov})
+    strategy.harvest({"from": strategist})
     assert (
-        pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
-    ) or strategy.estimatedTotalAssets() > amount
+        pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == 0
+        or strategy.estimatedTotalAssets() <= strategy.minWant()
+    )
+    assert (
+        pytest.approx(
+            vault.strategies(strategy).dict()["totalLoss"], rel=RELATIVE_APPROX
+        )
+        == 0
+    )
+
+
+def test_manual_deleverage_to_zero_with_atokens(
+    chain, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+):
+    # Deposit to the vault and harvest
+    actions.user_deposit(user, vault, token, amount)
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+
+    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
+
+    chain.sleep(24 * 3600)
+
+    utils.strategy_status(vault, strategy)
+
+    strategy.manualDeleverage(2**256 - 1, True, {"from": gov})
+    utils.strategy_status(vault, strategy)
+    utils.sleep(1)
+
+    deposits = strategy.getCurrentPosition().dict()["deposits"]
+    while deposits > strategy.minWant():
+        strategy.manualReleaseWant(deposits, {"from": gov})
+        deposits = strategy.getCurrentPosition().dict()["deposits"]
+    assert strategy.getCurrentSupply() <= strategy.minWant()
+
+    if strategy.estimatedRewardsInWant() >= strategy.minRewardToSell():
+        strategy.manualClaimRewards({"from": gov})
+        strategy.manualSellRewards({"from": gov})
+
+    utils.sleep()
+    utils.strategy_status(vault, strategy)
 
     vault.revokeStrategy(strategy.address, {"from": gov})
     strategy.harvest({"from": strategist})

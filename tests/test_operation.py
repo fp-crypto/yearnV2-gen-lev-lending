@@ -1,11 +1,25 @@
-import brownie
-from brownie import Contract, test
+from brownie import Contract, reverts
 import pytest
-from utils import actions, checks, utils
+from utils import actions, utils
 
 
-def test_operation(
-    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+@pytest.fixture(
+    params=[
+        True,
+        False,
+    ],
+    scope="function",
+    autouse=True,
+)
+def flashloan_enabled(request, strategy, gov):
+    enable = request.param
+    strategy.setFlashloanEnabled(enable, {"from": gov})
+    assert strategy.flashloanEnabled() == enable
+    yield enable
+
+
+def test_basic_operation(
+    chain, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
 ):
     # Deposit to the vault
     user_balance_before = token.balanceOf(user)
@@ -19,17 +33,19 @@ def test_operation(
     utils.strategy_status(vault, strategy)
 
     assert token.balanceOf(strategy) <= strategy.minWant()
+    strategy.tend({"from": strategist})
+
     assert (
-        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        pytest.approx(strategy.getCurrentCollatRatio(), abs=strategy.minRatio())
         == strategy.targetCollatRatio()
     )
-
-    # tend()
-    strategy.tend({"from": strategist})
 
     utils.strategy_status(vault, strategy)
 
     utils.sleep(3 * 24 * 3600)
+    utils.strategy_status(vault, strategy)
+    assert strategy.estimatedRewardsInWant() > 0
+
     strategy.harvest({"from": strategist})
 
     # withdrawal
@@ -41,14 +57,12 @@ def test_operation(
 
 
 def test_withdraw(
-    chain,
     token,
     vault,
     strategy,
     user,
     strategist,
     amount,
-    gov,
     RELATIVE_APPROX,
 ):
     # Deposit to the vault
@@ -56,7 +70,7 @@ def test_withdraw(
     actions.user_deposit(user, vault, token, amount)
 
     # harvest
-    chain.sleep(1)
+    utils.sleep(1)
     strategy.harvest({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
@@ -66,18 +80,10 @@ def test_withdraw(
     strategy.harvest({"from": strategist})
     utils.sleep()
 
-    # remove this statement
-    # if not flashloans_active:
-    #    strategy.setCollateralTargets(
-    #        strategy.maxBorrowCollatRatio() - (0.02 * 1e18),
-    #        strategy.maxCollatRatio(),
-    #        strategy.maxBorrowCollatRatio(),
-    #        {"from": gov},
-    #    )
-
     # withdrawal
     for i in range(1, 10):
         print(i)
+        utils.sleep(1)
         utils.strategy_status(vault, strategy)
         vault.withdraw(int(amount / 10), user, 10_000, {"from": user})
         assert token.balanceOf(user) >= user_balance_before * i / 10
@@ -90,10 +96,9 @@ def test_withdraw(
     utils.strategy_status(vault, strategy)
 
 
-@pytest.mark.parametrize("swap_router", [0])
+@pytest.mark.parametrize("percent_max_leverage", [1e-5, 0.1, 0.25, 0.5, 0.75, 1])
 def test_apr(
     chain,
-    accounts,
     gov,
     token,
     vault,
@@ -101,34 +106,43 @@ def test_apr(
     user,
     strategist,
     amount,
-    swap_router,
+    percent_max_leverage,
+    pool,
+    flashloan_enabled,
     RELATIVE_APPROX,
 ):
-    strategy.setRewardBehavior(
-        swap_router,
-        strategy.minRewardToSell(),
+    strategy.setCollateralTargets(
+        strategy.maxBorrowCollatRatio() * percent_max_leverage,
+        strategy.maxCollatRatio(),
+        strategy.maxBorrowCollatRatio(),
         {"from": gov},
     )
-
     # Deposit to the vault
     actions.user_deposit(user, vault, token, amount)
 
     # harvest
     chain.sleep(1)
     strategy.harvest({"from": strategist})
+    if (
+        percent_max_leverage == 1
+        and not pool.getUserEMode(strategy) == 0
+        and not flashloan_enabled
+    ):  # extra tend when using very high leverage
+        strategy.tend({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
     utils.sleep(7 * 24 * 3600)
 
     vault.revokeStrategy(strategy.address, {"from": gov})
+    ltv = strategy.getCurrentCollatRatio() / 1e18
     strategy.harvest({"from": strategist})
     print(
-        f"APR: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}% on {amount/10**token.decimals():,.2f}"
+        f"APR @ {ltv:.2%} LTV: {(token.balanceOf(vault)-amount)*52*100/amount:.2f}% on {amount/10**token.decimals():,.2f} {token.symbol()}"
     )
 
 
 def test_harvest_after_long_idle_period(
-    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    chain, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
 ):
     # Deposit to the vault
     actions.user_deposit(user, vault, token, amount)
@@ -149,7 +163,7 @@ def test_harvest_after_long_idle_period(
 
 
 def test_emergency_exit(
-    chain, accounts, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    chain, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
 ):
     # Deposit to the vault
     actions.user_deposit(user, vault, token, amount)
@@ -162,6 +176,46 @@ def test_emergency_exit(
     chain.sleep(1)
     strategy.harvest({"from": strategist})
     assert strategy.estimatedTotalAssets() < amount
+
+
+def test_harvest_with_credit(
+    token,
+    vault,
+    strategy,
+    user,
+    strategist,
+    amount,
+    RELATIVE_APPROX,
+):
+    # Deposit to the vault
+    user_balance_before = token.balanceOf(user)
+    half_amount = amount / 2
+    actions.user_deposit(user, vault, token, half_amount)
+
+    # harvest
+    utils.sleep(1)
+    strategy.harvest({"from": strategist})
+    assert (
+        pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX)
+        == half_amount
+    )
+
+    utils.sleep(1 * 24 * 3600)
+
+    actions.user_deposit(user, vault, token, token.balanceOf(user))
+    assert vault.creditAvailable(strategy) > 0
+
+    utils.strategy_status(vault, strategy)
+    strategy.harvest({"from": strategist})
+    assert token.balanceOf(strategy) <= strategy.minWant()
+    utils.sleep(6 * 24 * 3600)
+
+    strategy.harvest({"from": strategist})
+    utils.sleep(6 * 3600)
+
+    vault.withdraw({"from": user})
+    assert token.balanceOf(user) > user_balance_before
+    utils.strategy_status(vault, strategy)
 
 
 @pytest.mark.parametrize(
@@ -177,6 +231,8 @@ def test_increase_debt_ratio(
     strategist,
     amount,
     starting_debt_ratio,
+    pool,
+    flashloan_enabled,
     RELATIVE_APPROX,
 ):
     # Deposit to the vault and harvest
@@ -186,6 +242,11 @@ def test_increase_debt_ratio(
     strategy.harvest({"from": strategist})
     part_amount = int(amount * starting_debt_ratio / 10_000)
 
+    if (
+        not pool.getUserEMode(strategy) == 0 and not flashloan_enabled
+    ):  # extra tend when using very high leverage
+        strategy.tend({"from": strategist})
+
     utils.strategy_status(vault, strategy)
 
     assert (
@@ -194,7 +255,7 @@ def test_increase_debt_ratio(
     )
     assert token.balanceOf(strategy) <= strategy.minWant()
     assert (
-        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        pytest.approx(strategy.getCurrentCollatRatio(), abs=strategy.minRatio())
         == strategy.targetCollatRatio()
     )
 
@@ -202,12 +263,17 @@ def test_increase_debt_ratio(
     chain.sleep(1)
     strategy.harvest({"from": strategist})
 
+    if (
+        not pool.getUserEMode(strategy) == 0 and not flashloan_enabled
+    ):  # extra tend when using very high leverage
+        strategy.tend({"from": strategist})
+
     utils.strategy_status(vault, strategy)
 
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
     assert token.balanceOf(strategy) <= strategy.minWant()
     assert (
-        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        pytest.approx(strategy.getCurrentCollatRatio(), abs=strategy.minRatio())
         == strategy.targetCollatRatio()
     )
 
@@ -216,7 +282,6 @@ def test_increase_debt_ratio(
     "ending_debt_ratio", [100, 500, 1_000, 2_500, 5_000, 7_500, 9_500, 9_900]
 )
 def test_decrease_debt_ratio(
-    chain,
     gov,
     token,
     vault,
@@ -225,6 +290,8 @@ def test_decrease_debt_ratio(
     strategist,
     amount,
     ending_debt_ratio,
+    pool,
+    flashloan_enabled,
     RELATIVE_APPROX,
 ):
     # Deposit to the vault and harvest
@@ -233,19 +300,28 @@ def test_decrease_debt_ratio(
     utils.sleep(1)
     strategy.harvest({"from": strategist})
 
+    if (
+        not pool.getUserEMode(strategy) == 0 and not flashloan_enabled
+    ):  # extra tend when using very high leverage
+        strategy.tend({"from": strategist})
+
     utils.strategy_status(vault, strategy)
 
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
     assert token.balanceOf(strategy) <= strategy.minWant()
     assert (
-        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        pytest.approx(strategy.getCurrentCollatRatio(), abs=strategy.minRatio())
         == strategy.targetCollatRatio()
     )
 
-    # Two harvests needed to unlock
     vault.updateStrategyDebtRatio(strategy.address, ending_debt_ratio, {"from": gov})
     utils.sleep(1)
     strategy.harvest({"from": strategist})
+
+    if (
+        not pool.getUserEMode(strategy) == 0 and not flashloan_enabled
+    ):  # extra tend when using very high leverage
+        strategy.tend({"from": strategist})
 
     utils.strategy_status(vault, strategy)
 
@@ -256,46 +332,13 @@ def test_decrease_debt_ratio(
     )
     assert token.balanceOf(strategy) <= strategy.minWant()
     assert (
-        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
-        == strategy.targetCollatRatio()
-    )
-
-
-@pytest.mark.parametrize("percent_default_target", [0.1, 0.25, 0.5, 0.75])
-def test_lower_ltvs(
-    token,
-    vault,
-    strategy,
-    user,
-    strategist,
-    gov,
-    amount,
-    percent_default_target,
-    RELATIVE_APPROX,
-):
-    # Deposit to the vault and harvest
-    actions.user_deposit(user, vault, token, amount)
-    utils.sleep(1)
-    strategy.setCollateralTargets(
-        strategy.targetCollatRatio() * percent_default_target,
-        strategy.maxCollatRatio(),
-        strategy.maxBorrowCollatRatio(),
-        {"from": gov},
-    )
-    strategy.harvest({"from": strategist})
-
-    utils.strategy_status(vault, strategy)
-
-    assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
-    assert token.balanceOf(strategy) <= strategy.minWant()
-    assert (
-        pytest.approx(strategy.getCurrentCollatRatio(), rel=RELATIVE_APPROX)
+        pytest.approx(strategy.getCurrentCollatRatio(), abs=strategy.minRatio())
         == strategy.targetCollatRatio()
     )
 
 
 def test_large_deleverage(
-    chain, gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
+    gov, token, vault, strategy, user, strategist, amount, RELATIVE_APPROX
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
@@ -319,7 +362,7 @@ def test_large_deleverage(
 
 
 def test_larger_deleverage(
-    chain, gov, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
+    gov, token, vault, strategy, user, strategist, big_amount, RELATIVE_APPROX
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, big_amount)
@@ -351,11 +394,11 @@ def test_sweep(gov, vault, strategy, token, user, amount, weth, weth_amount):
     token.transfer(strategy, amount, {"from": user})
     assert token.address == strategy.want()
     assert token.balanceOf(strategy) > 0
-    with brownie.reverts("!want"):
+    with reverts("!want"):
         strategy.sweep(token, {"from": gov})
 
     # Vault share token doesn't work
-    with brownie.reverts("!shares"):
+    with reverts("!shares"):
         strategy.sweep(vault.address, {"from": gov})
 
     if token.address == weth.address:
@@ -380,18 +423,30 @@ def test_triggers(chain, gov, vault, strategy, token, amount, user, strategist):
 
 
 def test_tend(
-    chain, gov, vault, strategy, token, amount, user, strategist, RELATIVE_APPROX
+    chain,
+    protocol_data_provider,
+    vault,
+    strategy,
+    token,
+    amount,
+    user,
+    strategist,
+    pool,
+    RELATIVE_APPROX,
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
     chain.sleep(1)
     strategy.harvest({"from": strategist})
 
-    liquidationThreshold = (
-        Contract("0xf3B0611e2E4D2cd6aB4bb3e01aDe211c3f42A8C3")  # ProtocolDataProvider
-        .getReserveConfigurationData(token)
-        .dict()["liquidationThreshold"]
-    )
+    if pool.getUserEMode(strategy) == 0:
+        liquidationThreshold = protocol_data_provider.getReserveConfigurationData(
+            token
+        ).dict()["liquidationThreshold"]
+    else:
+        liquidationThreshold = pool.getEModeCategoryData(
+            pool.getUserEMode(strategy)
+        ).dict()["liquidationThreshold"]
 
     (deposits, borrows) = strategy.getCurrentPosition()
     theoDeposits = borrows * 1e4 / (liquidationThreshold - 90)
