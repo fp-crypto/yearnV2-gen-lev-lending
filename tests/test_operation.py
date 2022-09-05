@@ -208,7 +208,10 @@ def test_harvest_with_credit(
     utils.strategy_status(vault, strategy)
     strategy.harvest({"from": strategist})
     assert token.balanceOf(strategy) <= strategy.minWant()
-    utils.sleep()
+    utils.sleep(6 * 24 * 3600)
+
+    strategy.harvest({"from": strategist})
+    utils.sleep(6 * 3600)
 
     vault.withdraw({"from": user})
     assert token.balanceOf(user) > user_balance_before
