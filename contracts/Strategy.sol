@@ -4,7 +4,6 @@ pragma solidity ^0.8.12;
 
 import {BaseStrategy} from "@yearn/yearn-vaults/contracts/BaseStrategy.sol";
 
-import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import "../interfaces/velodrome/IVelodromeRouter.sol";
@@ -21,7 +20,6 @@ import "../interfaces/aave/v3/periphery/IRewardsController.sol";
 import "./ySwapper.sol";
 
 contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
-    using Address for address;
     using SafeERC20 for IERC20;
 
     // protocol address
