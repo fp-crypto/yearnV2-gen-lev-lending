@@ -117,8 +117,8 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
         _autoConfigureLTVs();
 
         // approve spend protocol spend
-        approveMaxSpend(address(want), address(POOL));
-        approveMaxSpend(address(aToken), address(POOL));
+        IERC20(address(want)).safeApprove(address(POOL), type(uint256).max);
+        IERC20(address(aToken)).safeApprove(address(POOL), type(uint256).max);
 
         _updateRewardTokens();
         // approve swap router spend
@@ -439,6 +439,7 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
     }
 
     function updateRewardTokens() external onlyVaultManagers {
+        revokeRouterRewardSpend();
         _updateRewardTokens();
         approveRouterRewardSpend();
     }
@@ -899,11 +900,16 @@ contract Strategy is BaseStrategy, IFlashLoanReceiver, ySwapper {
 
     function approveRouterRewardSpend() internal {
         for (uint256 i = 0; i < rewardTokens.length; i++) {
-            approveMaxSpend(rewardTokens[i], address(VELODROME_ROUTER));
+            IERC20(rewardTokens[i]).safeApprove(
+                address(VELODROME_ROUTER),
+                type(uint256).max
+            );
         }
     }
 
-    function approveMaxSpend(address token, address spender) internal {
-        IERC20(token).safeApprove(spender, type(uint256).max);
+    function revokeRouterRewardSpend() internal {
+        for (uint256 i = 0; i < rewardTokens.length; i++) {
+            IERC20(rewardTokens[i]).approve(address(VELODROME_ROUTER), 0);
+        }
     }
 }

@@ -72,7 +72,7 @@ abstract contract ySwapper {
         (address[] memory tokens, ) = getYSwapTokens();
 
         for (uint256 i; i < tokens.length; ++i) {
-            IERC20(tokens[i]).safeApprove(_tradeFactory, 0);
+            IERC20(tokens[i]).approve(_tradeFactory, 0);
         }
 
         tradeFactory = address(0);
