@@ -50,12 +50,12 @@ def keeper(accounts):
 
 
 token_addresses = {
-    "BTC": "0x321162Cd933E2Be498Cd2267a90534A804051b11",  # WBTC
-    "ETH": "0x74b23882a30290451A17c44f4F05243b6b58C76d",  # WETH
-    "DAI": "0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E",  # DAI
-    "USDC": "0x04068DA6C83AFCFA0e13ba15A6696662335D5B75",  # USDC
-    "WFTM": "0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83",  # WFTM
-    "MIM": "0x82f0B8B456c1A451378467398982d4834b6829c1",  # MIM
+    "DAI": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",  # WBTC
+    # "ETH": "0x74b23882a30290451A17c44f4F05243b6b58C76d",  # WETH
+    # "DAI": "0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E",  # DAI
+    # "USDC": "0x04068DA6C83AFCFA0e13ba15A6696662335D5B75",  # USDC
+    # "WFTM": "0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83",  # WFTM
+    # "MIM": "0x82f0B8B456c1A451378467398982d4834b6829c1",  # MIM
 }
 
 # TODO: uncomment those tokens you want to test as want
@@ -65,7 +65,7 @@ token_addresses = {
         # "ETH",   # ETH
         # "DAI",   # DAI
         # "USDC",  # USDC
-        "WFTM",  # WFTM
+        "DAI",  # WFTM
         # "MIM",   # MIM
     ],
     scope="session",
@@ -76,12 +76,12 @@ def token(request):
 
 
 whale_addresses = {
-    "BTC": "0x4565DC3Ef685E4775cdF920129111DdF43B9d882",
-    "ETH": "0xC772BA6C2c28859B7a0542FAa162a56115dDCE25",
-    "DAI": "0x8CFA87aD11e69E071c40D58d2d1a01F862aE01a8",
-    "USDC": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
-    "WFTM": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d",
-    "MIM": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
+    "DAI": "0xBA479d5585EcEC47eDc2a571dA430A40f43c3851",
+    # "ETH": "0xC772BA6C2c28859B7a0542FAa162a56115dDCE25",
+    # "DAI": "0x8CFA87aD11e69E071c40D58d2d1a01F862aE01a8",
+    # "USDC": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
+    # "WFTM": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d",
+    # "MIM": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
 }
 
 
@@ -110,7 +110,7 @@ def amount(token, token_whale, user):
     # it impersonate a whale address
     if amount > token.balanceOf(token_whale):
         amount = token.balanceOf(token_whale)
-    token.transfer(user, amount, {"from": token_whale})
+    token.transfer(user, amount, {"from": token_whale, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
     yield amount
 
 
@@ -123,27 +123,26 @@ def big_amount(token, token_whale, user):
     # it impersonate a whale address
     if amount > token.balanceOf(token_whale):
         amount = token.balanceOf(token_whale)
-    token.transfer(user, amount, {"from": token_whale})
+    token.transfer(user, amount, {"from": token_whale, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
     yield token.balanceOf(user)
 
 
-@pytest.fixture
-def wftm():
-    yield Contract("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83")
+# @pytest.fixture
+# def wftm():
+#     yield Contract("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83")
 
 
 @pytest.fixture
-def weth(wftm):
-    yield wftm
-    # token_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-    # yield Contract(token_address)
+def weth():
+    token_address = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+    yield Contract(token_address)
 
 
 @pytest.fixture
 def weth_amount(user, weth):
     weth_amount = 10 ** weth.decimals()
     weth.transfer(
-        user, weth_amount, {"from": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d"}
+        user, weth_amount, {"from": "0xC948eB5205bDE3e18CAc4969d6ad3a56ba7B2347", "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000} # WETH WHALE
     )
     yield weth_amount
 
@@ -151,11 +150,12 @@ def weth_amount(user, weth):
 @pytest.fixture(scope="function", autouse=True)
 def vault(pm, gov, rewards, guardian, management, token):
     Vault = pm(config["dependencies"][0]).Vault
-    vault = guardian.deploy(Vault)
+    #vault = guardian.deploy(Vault)
+    vault = Vault.deploy({"from":guardian, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
     vault.initialize(token, gov, rewards, "", "", guardian, management)
-    vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
-    vault.setManagement(management, {"from": gov})
-    vault.setManagementFee(0, {"from": gov})
+    vault.setDepositLimit(2 ** 256 - 1, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
+    vault.setManagement(management, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
+    vault.setManagementFee(0, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
     yield vault
 
 
@@ -167,8 +167,8 @@ def factory(strategist, vault, LevGeistFactory):
 @pytest.fixture(scope="function")
 def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
     strategy = Strategy.at(factory.original())
-    strategy.setKeeper(keeper, {"from": strategist})
-    vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov})
+    strategy.setKeeper(keeper, {"from": strategist, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
+    vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
     chain.sleep(1)
     chain.mine()
     yield strategy
@@ -177,7 +177,7 @@ def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
 @pytest.fixture()
 def enable_healthcheck(strategy, gov):
     strategy.setHealthCheck("0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0", {"from": gov})
-    strategy.setDoHealthCheck(True, {"from": gov})
+    strategy.setDoHealthCheck(True, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
     yield True
 
 

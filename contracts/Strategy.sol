@@ -26,17 +26,17 @@ contract Strategy is BaseStrategy {
 
     // protocol address
     IProtocolDataProvider private constant protocolDataProvider =
-        IProtocolDataProvider(0xf3B0611e2E4D2cd6aB4bb3e01aDe211c3f42A8C3);
+        IProtocolDataProvider(0xa3e42d11d8CC148160CC3ACED757FB44696a9CcA);
     IGeistIncentivesController private constant incentivesController =
-        IGeistIncentivesController(0x297FddC5c33Ef988dd03bd13e162aE084ea1fE57);
+        IGeistIncentivesController(0x287Ff908B4DB0b29B65B8442B0a5840455f0Db32);
     ILendingPool private constant lendingPool =
-        ILendingPool(0x9FAD24f572045c7869117160A571B2e50b10d068);
+        ILendingPool(0x2032b9A8e9F7e76768CA9271003d3e43E1616B1F);
 
     // Token addresses
-    address private constant geist = 0xd8321AA83Fb0a4ECd6348D4577431310A6E0814d;
+    address private constant geist = 0x0C4681e6C0235179ec3D4F4fc4DF3d14FDD96017;
 
     // wftm
-    address private constant weth = 0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83;
+    address private constant weth = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
 
     // Supply and borrow tokens
     IAToken public aToken;
@@ -44,9 +44,9 @@ contract Strategy is BaseStrategy {
 
     // SWAP routers
     IUni private constant SPOOKY_V2_ROUTER =
-        IUni(0xF491e7B69E4244ad4002BC14e878a34207E38c29);
+        IUni(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506); // SUSHI
     IUni private constant SPIRIT_V2_ROUTER =
-        IUni(0x16327E3FbDaCA3bcF7E38F5Af2599D2DDc33aE52);
+        IUni(0x16327E3FbDaCA3bcF7E38F5Af2599D2DDc33aE52); // nothing yet
 
     // OPS State Variables
     uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
