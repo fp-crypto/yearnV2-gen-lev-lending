@@ -416,7 +416,10 @@ contract Strategy is BaseStrategy {
         _incentivesController.claim(address(this), getAssets());
 
         // Exit with 50% penalty
-        IMultiFeeDistribution(_incentivesController.rewardMinter()).exit();
+        IMultiFeeDistribution(_incentivesController.rewardMinter()).exit(
+            true,
+            address(this)
+        );
 
         // sell reward for want
         uint256 rewardBalance = balanceOfReward();

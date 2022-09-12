@@ -110,7 +110,7 @@ def amount(token, token_whale, user):
     # it impersonate a whale address
     if amount > token.balanceOf(token_whale):
         amount = token.balanceOf(token_whale)
-    token.transfer(user, amount, {"from": token_whale, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
+    token.transfer(user, amount, {"from": token_whale})
     yield amount
 
 
@@ -123,7 +123,7 @@ def big_amount(token, token_whale, user):
     # it impersonate a whale address
     if amount > token.balanceOf(token_whale):
         amount = token.balanceOf(token_whale)
-    token.transfer(user, amount, {"from": token_whale, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
+    token.transfer(user, amount, {"from": token_whale})
     yield token.balanceOf(user)
 
 
@@ -142,7 +142,9 @@ def weth():
 def weth_amount(user, weth):
     weth_amount = 10 ** weth.decimals()
     weth.transfer(
-        user, weth_amount, {"from": "0xC948eB5205bDE3e18CAc4969d6ad3a56ba7B2347", "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000} # WETH WHALE
+        user,
+        weth_amount,
+        {"from": "0xC948eB5205bDE3e18CAc4969d6ad3a56ba7B2347"},  # WETH WHALE
     )
     yield weth_amount
 
@@ -150,12 +152,12 @@ def weth_amount(user, weth):
 @pytest.fixture(scope="function", autouse=True)
 def vault(pm, gov, rewards, guardian, management, token):
     Vault = pm(config["dependencies"][0]).Vault
-    #vault = guardian.deploy(Vault)
-    vault = Vault.deploy({"from":guardian, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
+    # vault = guardian.deploy(Vault)
+    vault = Vault.deploy({"from": guardian})
     vault.initialize(token, gov, rewards, "", "", guardian, management)
-    vault.setDepositLimit(2 ** 256 - 1, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
-    vault.setManagement(management, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
-    vault.setManagementFee(0, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
+    vault.setDepositLimit(2**256 - 1, {"from": gov})
+    vault.setManagement(management, {"from": gov})
+    vault.setManagementFee(0, {"from": gov})
     yield vault
 
 
@@ -167,8 +169,8 @@ def factory(strategist, vault, LevGeistFactory):
 @pytest.fixture(scope="function")
 def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
     strategy = Strategy.at(factory.original())
-    strategy.setKeeper(keeper, {"from": strategist, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
-    vault.addStrategy(strategy, 10_000, 0, 2 ** 256 - 1, 1_000, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
+    strategy.setKeeper(keeper, {"from": strategist})
+    vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 1_000, {"from": gov})
     chain.sleep(1)
     chain.mine()
     yield strategy
@@ -177,7 +179,7 @@ def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
 @pytest.fixture()
 def enable_healthcheck(strategy, gov):
     strategy.setHealthCheck("0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0", {"from": gov})
-    strategy.setDoHealthCheck(True, {"from": gov, "allow_revert": True, "gas_limit":20000000, "max_fee":200000000000, "priority_fee":10000000000})
+    strategy.setDoHealthCheck(True, {"from": gov})
     yield True
 
 
