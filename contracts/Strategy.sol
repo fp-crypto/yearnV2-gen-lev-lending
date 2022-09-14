@@ -18,8 +18,8 @@ import "../interfaces/aave/IAToken.sol";
 import "../interfaces/aave/IVariableDebtToken.sol";
 import "../interfaces/aave/ILendingPool.sol";
 
-import "../interfaces/geist/IGeistIncentivesController.sol";
-import "../interfaces/geist/IMultiFeeDistribution.sol";
+import "../interfaces/radiant/IRadiantIncentivesController.sol";
+import "../interfaces/radiant/IMultiFeeDistribution.sol";
 
 contract Strategy is BaseStrategy {
     using Address for address;
@@ -27,13 +27,13 @@ contract Strategy is BaseStrategy {
     // protocol address
     IProtocolDataProvider private constant protocolDataProvider =
         IProtocolDataProvider(0xa3e42d11d8CC148160CC3ACED757FB44696a9CcA);
-    IGeistIncentivesController private constant incentivesController =
-        IGeistIncentivesController(0x287Ff908B4DB0b29B65B8442B0a5840455f0Db32);
+    IRadiantIncentivesController private constant incentivesController =
+        IRadiantIncentivesController(0x287Ff908B4DB0b29B65B8442B0a5840455f0Db32);
     ILendingPool private constant lendingPool =
         ILendingPool(0x2032b9A8e9F7e76768CA9271003d3e43E1616B1F);
 
     // Token addresses
-    address private constant geist = 0x0C4681e6C0235179ec3D4F4fc4DF3d14FDD96017;
+    address private constant radiant = 0x0C4681e6C0235179ec3D4F4fc4DF3d14FDD96017;
 
     // wftm
     address private constant weth = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
@@ -43,7 +43,7 @@ contract Strategy is BaseStrategy {
     IVariableDebtToken public debtToken;
 
     // SWAP routers
-    IUni private constant SPOOKY_V2_ROUTER =
+    IUni private constant SUSHI_V2_ROUTER =
         IUni(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506); // SUSHI
     IUni private constant SPIRIT_V2_ROUTER =
         IUni(0x16327E3FbDaCA3bcF7E38F5Af2599D2DDc33aE52); // nothing yet
@@ -63,7 +63,6 @@ contract Strategy is BaseStrategy {
 
     uint8 public maxIterations;
 
-    enum SwapRouter {Spooky, Spirit}
     IUni public router;
 
     bool private alreadyAdjusted; // Signal whether a position adjust was done in prepareReturn
@@ -99,7 +98,7 @@ contract Strategy is BaseStrategy {
         minRatio = 0.005 ether;
         minRewardToSell = 1e15;
 
-        router = SPOOKY_V2_ROUTER;
+        router = SUSHI_V2_ROUTER;
 
         alreadyAdjusted = false;
 
@@ -124,8 +123,8 @@ contract Strategy is BaseStrategy {
         approveMaxSpend(address(aToken), address(lendingPool));
 
         // approve swap router spend
-        approveMaxSpend(geist, address(SPOOKY_V2_ROUTER));
-        approveMaxSpend(geist, address(SPIRIT_V2_ROUTER));
+        approveMaxSpend(radiant, address(SUSHI_V2_ROUTER));
+        approveMaxSpend(radiant, address(SPIRIT_V2_ROUTER));
     }
 
     // SETTERS
@@ -158,21 +157,15 @@ contract Strategy is BaseStrategy {
         maxIterations = _maxIterations;
     }
 
-    function setRewardBehavior(SwapRouter _swapRouter, uint256 _minRewardToSell)
+    function setRewardBehavior(uint256 _minRewardToSell)
         external
         onlyVaultManagers
     {
-        require(
-            _swapRouter == SwapRouter.Spooky || _swapRouter == SwapRouter.Spirit
-        );
-        router = _swapRouter == SwapRouter.Spooky
-            ? SPOOKY_V2_ROUTER
-            : SPIRIT_V2_ROUTER;
         minRewardToSell = _minRewardToSell;
     }
 
     function name() external view override returns (string memory) {
-        return "StrategyGenLevGeist";
+        return "StrategyGenLevradiant";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
@@ -204,7 +197,7 @@ contract Strategy is BaseStrategy {
         rewardBalance = rewardBalance.mul(5000).div(MAX_BPS);
         rewardBalance = rewardBalance.add(balanceOfReward());
 
-        return tokenToWant(geist, rewardBalance);
+        return tokenToWant(radiant, rewardBalance);
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -411,12 +404,15 @@ contract Strategy is BaseStrategy {
     // INTERNAL ACTIONS
 
     function _claimAndSellRewards() internal returns (uint256) {
-        IGeistIncentivesController _incentivesController = incentivesController;
+        IRadiantIncentivesController _incentivesController = incentivesController;
 
         _incentivesController.claim(address(this), getAssets());
 
         // Exit with 50% penalty
-        IMultiFeeDistribution(_incentivesController.rewardMinter()).exit();
+        IMultiFeeDistribution(_incentivesController.rewardMinter()).exit(
+            true,
+            address(this)
+        );
 
         // sell reward for want
         uint256 rewardBalance = balanceOfReward();
@@ -593,7 +589,7 @@ contract Strategy is BaseStrategy {
     }
 
     function balanceOfReward() internal view returns (uint256) {
-        return IERC20(geist).balanceOf(address(this));
+        return IERC20(radiant).balanceOf(address(this));
     }
 
     function getCurrentPosition()
@@ -677,7 +673,7 @@ contract Strategy is BaseStrategy {
         router.swapExactTokensForTokens(
             amountIn,
             minOut,
-            getTokenOutPathV2(address(geist), address(want)),
+            getTokenOutPathV2(address(radiant), address(want)),
             address(this),
             now
         );

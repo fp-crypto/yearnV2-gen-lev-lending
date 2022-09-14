@@ -6,20 +6,20 @@ from utils import checks, actions, utils
 
 
 def test_shutdown(
-    chain, token, token_whale, vault, strategy, amount, gov, user, RELATIVE_APPROX
+    chain, token, token_whale, vault, strategy, strategist, amount, gov, user, RELATIVE_APPROX
 ):
     # Deposit to the vault and harvest
     actions.user_deposit(user, vault, token, amount)
     chain.sleep(1)
-    strategy.harvest({"from": gov})
+    strategy.harvest({"from": strategist})
     assert pytest.approx(strategy.estimatedTotalAssets(), rel=RELATIVE_APPROX) == amount
 
     # Generate profit
     profit_amount = amount * 0.1  # 10% profit
     actions.generate_profit(strategy, token_whale, profit_amount)
 
-    strategy.harvest({"from": gov})
-    utils.sleep()
+    strategy.harvest({"from": strategist})
+    utils.sleep(1)
 
     totalGain = profit_amount
     totalLoss = 0

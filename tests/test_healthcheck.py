@@ -17,7 +17,7 @@ def test_healthcheck(
     strategy.harvest({"from": strategist})
 
     chain.sleep(24 * 3600)
-    chain.mine()
+    chain.mine(1)
 
     strategy.setDoHealthCheck(True, {"from": gov})
 

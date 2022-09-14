@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: agpl-3.0
 pragma solidity 0.6.12;
 
-interface IGeistIncentivesController {
+interface IRadiantIncentivesController {
     function addPool(address _token, uint256 _allocPoint) external;
 
     function batchUpdateAllocPoint(

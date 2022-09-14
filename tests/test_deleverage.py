@@ -22,7 +22,8 @@ def test_deleverage_to_zero(
     n = 0
     while vault.debtOutstanding(strategy) > 0 and n < 5:
         utils.sleep(1)
-        strategy.harvest({"from": strategist})
+        tx = strategy.harvest({"from": strategist})
+        utils.rest(tx)
         utils.strategy_status(vault, strategy)
         n += 1
 
@@ -67,7 +68,8 @@ def test_deleverage_parameter_change(
         == strategy.targetCollatRatio()
     ):
         utils.sleep(1)
-        strategy.harvest({"from": strategist})
+        tx = strategy.harvest({"from": strategist})
+        utils.rest(tx)
         utils.strategy_status(vault, strategy)
         n += 1
 
@@ -107,7 +109,8 @@ def test_manual_deleverage_to_zero(
         theo_min_deposit = borrow / (strategy.maxCollatRatio() / 1e18)
         step_size = min(int(deposit - theo_min_deposit), borrow)
 
-        strategy.manualDeleverage(step_size, {"from": gov})
+        tx = strategy.manualDeleverage(step_size, {"from": gov})
+        utils.rest(tx)
 
         n += 1
 
@@ -120,11 +123,12 @@ def test_manual_deleverage_to_zero(
     utils.sleep(1)
     deposits = strategy.getCurrentPosition().dict()["deposits"]
     while deposits > strategy.minWant():
-        strategy.manualReleaseWant(deposits, {"from": gov})
+        tx = strategy.manualReleaseWant(deposits, {"from": gov})
+        utils.rest(tx)
         deposits = strategy.getCurrentPosition().dict()["deposits"]
     assert strategy.getCurrentSupply() <= strategy.minWant()
 
-    strategy.setRewardBehavior(0, 1e6, {"from": gov})
+    strategy.setRewardBehavior(1e6, {"from": gov})
     if strategy.estimatedRewardsInWant() >= strategy.minRewardToSell():
         strategy.manualClaimAndSellRewards({"from": gov})
 

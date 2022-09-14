@@ -90,7 +90,6 @@ def test_withdraw(
     utils.strategy_status(vault, strategy)
 
 
-@pytest.mark.parametrize("swap_router", [0])
 def test_apr(
     chain,
     accounts,
@@ -101,11 +100,9 @@ def test_apr(
     user,
     strategist,
     amount,
-    swap_router,
     RELATIVE_APPROX,
 ):
     strategy.setRewardBehavior(
-        swap_router,
         strategy.minRewardToSell(),
         {"from": gov},
     )
@@ -338,7 +335,8 @@ def test_larger_deleverage(
     n = 0
     while vault.debtOutstanding(strategy) > 0 and n < 5:
         utils.sleep(1)
-        strategy.harvest({"from": strategist})
+        tx = strategy.harvest({"from": strategist})
+        utils.rest(tx)
         utils.strategy_status(vault, strategy)
         n += 1
 
@@ -388,7 +386,7 @@ def test_tend(
     strategy.harvest({"from": strategist})
 
     liquidationThreshold = (
-        Contract("0xf3B0611e2E4D2cd6aB4bb3e01aDe211c3f42A8C3")  # ProtocolDataProvider
+        Contract("0xa3e42d11d8CC148160CC3ACED757FB44696a9CcA")  # ProtocolDataProvider
         .getReserveConfigurationData(token)
         .dict()["liquidationThreshold"]
     )
