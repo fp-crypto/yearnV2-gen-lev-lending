@@ -1,5 +1,5 @@
 import pytest
-from utils import actions
+from utils import actions, utils
 import brownie
 
 
@@ -31,8 +31,11 @@ def test_migration(
     with brownie.reverts():
         vault.migrateStrategy(strategy, new_strategy, {"from": gov})
 
-    vault.revokeStrategy(strategy, {"from": gov})
-    strategy.harvest({"from": gov})
+    tx = vault.revokeStrategy(strategy, {"from": gov})
+    utils.rest(tx)
+    tx = strategy.harvest({"from": gov})
+    utils.rest(tx)
+
 
     vault.migrateStrategy(strategy, new_strategy, {"from": gov})
     vault.updateStrategyDebtRatio(new_strategy, 10_000, {"from": gov})

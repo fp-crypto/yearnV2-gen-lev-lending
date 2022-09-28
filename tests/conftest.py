@@ -11,12 +11,12 @@ def shared_setup(fn_isolation):
 
 @pytest.fixture(scope="session")
 def gov(accounts):
-    yield accounts.at("0xC0E2830724C946a6748dDFE09753613cd38f6767", force=True)
+    yield accounts[6]
 
 
 @pytest.fixture(scope="session")
 def strat_ms(accounts):
-    yield accounts.at("0x72a34AbafAB09b15E7191822A679f28E067C4a16", force=True)
+    yield accounts[7]
 
 
 @pytest.fixture(scope="session")
@@ -50,23 +50,21 @@ def keeper(accounts):
 
 
 token_addresses = {
-    "BTC": "0x321162Cd933E2Be498Cd2267a90534A804051b11",  # WBTC
-    "ETH": "0x74b23882a30290451A17c44f4F05243b6b58C76d",  # WETH
-    "DAI": "0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E",  # DAI
-    "USDC": "0x04068DA6C83AFCFA0e13ba15A6696662335D5B75",  # USDC
-    "WFTM": "0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83",  # WFTM
-    "MIM": "0x82f0B8B456c1A451378467398982d4834b6829c1",  # MIM
+    "DAI": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+    "USDT": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+    "WETH": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+    "USDC": "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8",
+    "WBTC": "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",
 }
 
 # TODO: uncomment those tokens you want to test as want
 @pytest.fixture(
     params=[
-        # "BTC",   # WBTC
-        # "ETH",   # ETH
-        # "DAI",   # DAI
-        # "USDC",  # USDC
-        "WFTM",  # WFTM
-        # "MIM",   # MIM
+        "DAI",
+        #"USDT",
+        #"WETH",
+        #"USDC",
+        #"WBTC",
     ],
     scope="session",
     autouse=True,
@@ -76,12 +74,11 @@ def token(request):
 
 
 whale_addresses = {
-    "BTC": "0x4565DC3Ef685E4775cdF920129111DdF43B9d882",
-    "ETH": "0xC772BA6C2c28859B7a0542FAa162a56115dDCE25",
-    "DAI": "0x8CFA87aD11e69E071c40D58d2d1a01F862aE01a8",
-    "USDC": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
-    "WFTM": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d",
-    "MIM": "0x2dd7C9371965472E5A5fD28fbE165007c61439E1",
+    "DAI": "0xc5ed2333f8a2C351fCA35E5EBAdb2A82F5d254C3",
+    "USDT": "0x62383739D68Dd0F844103Db8dFb05a7EdED5BBE6",
+    "WETH": "0x9E722E233646E1eDEa4A913489A75262A181C911",
+    "USDC": "0xBA479d5585EcEC47eDc2a571dA430A40f43c3851",
+    "WBTC": "0x078f358208685046a11C85e8ad32895DED33A249",
 }
 
 
@@ -91,13 +88,11 @@ def token_whale(token):
 
 
 token_prices = {
-    "BTC": 40_000,
-    "ETH": 3_500,
-    "YFI": 30_000,
+    "WBTC": 40_000,
+    "WETH": 3_500,
     "DAI": 1,
     "USDC": 1,
-    "WFTM": 2,
-    "MIM": 1,
+    "USDT": 1,
 }
 
 
@@ -128,22 +123,16 @@ def big_amount(token, token_whale, user):
 
 
 @pytest.fixture
-def wftm():
-    yield Contract("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83")
-
-
-@pytest.fixture
-def weth(wftm):
-    yield wftm
-    # token_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-    # yield Contract(token_address)
+def weth():
+    token_address = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+    yield Contract(token_address)
 
 
 @pytest.fixture
 def weth_amount(user, weth):
     weth_amount = 10 ** weth.decimals()
     weth.transfer(
-        user, weth_amount, {"from": "0x5AA53f03197E08C4851CAD8C92c7922DA5857E5d"}
+        user, weth_amount, {"from": "0x9E722E233646E1eDEa4A913489A75262A181C911"} # WETH WHALE
     )
     yield weth_amount
 
@@ -151,7 +140,8 @@ def weth_amount(user, weth):
 @pytest.fixture(scope="function", autouse=True)
 def vault(pm, gov, rewards, guardian, management, token):
     Vault = pm(config["dependencies"][0]).Vault
-    vault = guardian.deploy(Vault)
+    #vault = guardian.deploy(Vault)
+    vault = Vault.deploy({"from":guardian})
     vault.initialize(token, gov, rewards, "", "", guardian, management)
     vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
     vault.setManagement(management, {"from": gov})
@@ -160,8 +150,8 @@ def vault(pm, gov, rewards, guardian, management, token):
 
 
 @pytest.fixture(scope="function")
-def factory(strategist, vault, LevGeistFactory):
-    yield strategist.deploy(LevGeistFactory, vault)
+def factory(strategist, vault, LevRadiantFactory):
+    yield strategist.deploy(LevRadiantFactory, vault)
 
 
 @pytest.fixture(scope="function")
@@ -176,7 +166,7 @@ def strategy(chain, keeper, vault, factory, gov, strategist, Strategy):
 
 @pytest.fixture()
 def enable_healthcheck(strategy, gov):
-    strategy.setHealthCheck("0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0", {"from": gov})
+    strategy.setHealthCheck("0x32059ccE723b4DD15dD5cb2a5187f814e6c470bC", {"from": gov}) ## ARB HEALTHCHECK
     strategy.setDoHealthCheck(True, {"from": gov})
     yield True
 

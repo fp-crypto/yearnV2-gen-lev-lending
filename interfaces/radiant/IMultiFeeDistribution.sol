@@ -3,5 +3,5 @@ pragma solidity 0.6.12;
 
 interface IMultiFeeDistribution {
     // Withdraw full unlocked balance and claim pending rewards
-    function exit() external;
+    function exit(bool claimRewards, address onBehalfOf) external;
 }

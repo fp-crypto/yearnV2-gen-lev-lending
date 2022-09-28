@@ -47,3 +47,8 @@ def from_units(token, amount):
 def sleep(seconds=6 * 60 * 60):
     chain.sleep(seconds)
     chain.mine(1)
+
+# Arbitrum rpc connection is crashing when adjacent tx's are complicated especially in loops
+def rest(tx):
+    tx.wait(1)
+    chain.sleep(1)
