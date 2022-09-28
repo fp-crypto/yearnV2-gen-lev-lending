@@ -21,6 +21,23 @@ import "../interfaces/aave/ILendingPool.sol";
 import "../interfaces/radiant/IRadiantIncentivesController.sol";
 import "../interfaces/radiant/IMultiFeeDistribution.sol";
 
+interface IERC20Metadata is IERC20 {
+    /**
+     * @dev Returns the name of the token.
+     */
+    function name() external view returns (string memory);
+
+    /**
+     * @dev Returns the symbol of the token.
+     */
+    function symbol() external view returns (string memory);
+
+    /**
+     * @dev Returns the decimals places of the token.
+     */
+    function decimals() external view returns (uint8);
+}
+
 contract Strategy is BaseStrategy {
     using Address for address;
 
@@ -45,8 +62,6 @@ contract Strategy is BaseStrategy {
     // SWAP routers
     IUni private constant SUSHI_V2_ROUTER =
         IUni(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506); // SUSHI
-    IUni private constant SPIRIT_V2_ROUTER =
-        IUni(0x16327E3FbDaCA3bcF7E38F5Af2599D2DDc33aE52); // nothing yet
 
     // OPS State Variables
     uint256 private constant DEFAULT_COLLAT_TARGET_MARGIN = 0.02 ether;
@@ -124,7 +139,6 @@ contract Strategy is BaseStrategy {
 
         // approve swap router spend
         approveMaxSpend(radiant, address(SUSHI_V2_ROUTER));
-        approveMaxSpend(radiant, address(SPIRIT_V2_ROUTER));
     }
 
     // SETTERS
@@ -165,7 +179,13 @@ contract Strategy is BaseStrategy {
     }
 
     function name() external view override returns (string memory) {
-        return "StrategyGenLevradiant";
+        return
+            string(
+                abi.encodePacked(
+                    "StrategyGenLevRadiant",
+                    IERC20Metadata(address(want)).symbol()
+                )
+            );
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
@@ -189,7 +209,7 @@ contract Strategy is BaseStrategy {
 
         uint256[] memory rewards =
             incentivesController.claimableReward(address(this), getAssets());
-        for (uint8 i = 0; i < rewards.length; i++) {
+        for (uint8 i = 0; i < rewards.length; ++i) {
             rewardBalance += rewards[i];
         }
 
@@ -702,7 +722,8 @@ contract Strategy is BaseStrategy {
         pure
         returns (uint256)
     {
-        return deposit.mul(collatRatio).div(COLLATERAL_RATIO_PRECISION);
+        if (collatRatio == 0) return 0;
+        return (deposit.mul(collatRatio)).div(COLLATERAL_RATIO_PRECISION);
     }
 
     function getDepositFromBorrow(uint256 borrow, uint256 collatRatio)
@@ -710,7 +731,8 @@ contract Strategy is BaseStrategy {
         pure
         returns (uint256)
     {
-        return borrow.mul(COLLATERAL_RATIO_PRECISION).div(collatRatio);
+        if (collatRatio == 0) return type(uint256).max;
+        return (borrow.mul(COLLATERAL_RATIO_PRECISION)).div(collatRatio);
     }
 
     function getBorrowFromSupply(uint256 supply, uint256 collatRatio)
@@ -718,10 +740,9 @@ contract Strategy is BaseStrategy {
         pure
         returns (uint256)
     {
+        if (collatRatio == 0) return 0;
         return
-            supply.mul(collatRatio).div(
-                COLLATERAL_RATIO_PRECISION.sub(collatRatio)
-            );
+            (supply.mul(collatRatio)).div((COLLATERAL_RATIO_PRECISION.sub(collatRatio)));
     }
 
     function approveMaxSpend(address token, address spender) internal {
